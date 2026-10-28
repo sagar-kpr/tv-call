@@ -1,0 +1,28 @@
+{
+  "name": "homeping",
+  "private": true,
+  "workspaces": [
+    "apps/server",
+    "apps/web",
+    "apps/mobile",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @homeping/server",
+    "dev:web": "npm run dev -w @homeping/web",
+    "build": "npm run build -w @homeping/server && npm run build -w @homeping/web",
+    "typecheck": "tsc --noEmit -p apps/server && tsc --noEmit -p apps/web && tsc --noEmit -p apps/mobile",
+    "test": "npm run test -w @homeping/server",
+    "android": "npm run android -w @homeping/mobile",
+    "test:web": "node scripts/smoke-web.mjs",
+    "build:apks": "bash scripts/build-apks.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "playwright-core": "^1.64.1",
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
