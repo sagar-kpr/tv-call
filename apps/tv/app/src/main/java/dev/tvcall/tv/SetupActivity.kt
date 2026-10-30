@@ -160,6 +160,13 @@ class SetupActivity : Activity() {
             } catch (_: Exception) { status.text = "Overlay settings are unavailable on this firmware." }
         }
         layout.addView(overlay)
+        val audio = Ui.button(this, "TV audio compatibility: ${if (Backend.tvAudioCompatibility(this)) "ON" else "OFF"}") {}
+        audio.setOnClickListener {
+            Backend.setTvAudioCompatibility(this, !Backend.tvAudioCompatibility(this))
+            audio.text = "TV audio compatibility: ${if (Backend.tvAudioCompatibility(this)) "ON" else "OFF"}"
+            status.text = "Audio mode saved for the next call. ON uses TV media playback and normal microphone capture; OFF uses communication audio."
+        }
+        layout.addView(audio)
         val reliable = Ui.button(this, "Reliable mode: ${if (Backend.reliable(this)) "ON" else "OFF"}") {}
         reliable.setOnClickListener {
             Backend.setReliable(this, !Backend.reliable(this))

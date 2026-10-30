@@ -3,6 +3,11 @@ package dev.tvcall.tv
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.app.AlertDialog
+import android.media.AudioManager
+import io.livekit.android.room.track.LocalAudioTrack
+import io.livekit.android.room.track.RemoteAudioTrack
+import livekit.org.webrtc.AudioTrackSink
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
@@ -36,6 +41,14 @@ class CallActivity : Activity() {
     private var started = false
     private var micOn = false
     private var cameraOn = false
+    private val micLevel = AudioLevel()
+    private val incomingLevel = AudioLevel()
+    private val micSink = AudioTrackSink { data, bits, _, _, _, _ -> micLevel.accept(data, bits) }
+    private val incomingSink = AudioTrackSink { data, bits, _, _, _, _ -> incomingLevel.accept(data, bits) }
+    private var localAudio: LocalAudioTrack? = null
+    private var remoteAudio: RemoteAudioTrack? = null
+    private lateinit var audioStatus: TextView
+    private var tvCompatibility = false
     private var room: Room? = null
     private var localTrack: VideoTrack? = null
     private var remoteTrack: VideoTrack? = null
@@ -56,6 +69,9 @@ class CallActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_SECURE)
         val layout = Ui.column(this).apply { setPadding(24, 12, 24, 12) }
         status = Ui.text(this, "Connecting your call…", 18f); layout.addView(status)
+        tvCompatibility = !api.caller && Backend.tvAudioCompatibility(this)
+        volumeControlStream = if (tvCompatibility) AudioManager.STREAM_MUSIC else AudioManager.STREAM_VOICE_CALL
+        audioStatus = Ui.text(this, "Audio: waiting for connection", 14f); layout.addView(audioStatus)
         val stage = android.widget.FrameLayout(this)
         remote = SurfaceViewRenderer(this).apply { contentDescription = "Remote video"; isFocusable = false }
         local = SurfaceViewRenderer(this).apply { contentDescription = "Your camera"; isFocusable = false; setZOrderMediaOverlay(true) }
@@ -67,7 +83,8 @@ class CallActivity : Activity() {
         camera = Ui.button(this, "Enable camera") { toggle(true) }
         switch = Ui.button(this, "Switch camera") { (localTrack as? LocalVideoTrack)?.switchCamera() }
         end = Ui.button(this, "End call") { endCall(true) }
-        for (button in listOf(mic, camera, switch, end)) controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
+        val audio = Ui.button(this, "Audio info") { showAudioInfo() }
+        for (button in listOf(mic, camera, switch, audio, end)) controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
         layout.addView(controls); setContentView(layout); end.requestFocus(); controlsEnabled(false)
         scope.launch {
             try {
@@ -96,7 +113,7 @@ class CallActivity : Activity() {
         scope.launch {
             try {
                 val credentials = withContext(Dispatchers.IO) { api.request("/calls/$id/media", JSONObject()) }
-                val active = LiveKit.create(applicationContext); room = active
+                val active = LiveKit.create(applicationContext, overrides = CallAudio.overrides(this@CallActivity, tvCompatibility)); room = active
                 val manager = getSystemService(CameraManager::class.java)
                 val external = if (!api.caller) runCatching { manager.cameraIdList.firstOrNull {
                     manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_EXTERNAL
@@ -107,8 +124,15 @@ class CallActivity : Activity() {
                 launch { active.events.collect { event ->
                     if (ending || room !== active) return@collect
                     when (event) {
-                        is RoomEvent.TrackSubscribed -> if (event.track is VideoTrack) attachRemote(event.track as VideoTrack)
-                        is RoomEvent.TrackUnsubscribed -> if (event.track === remoteTrack) { remoteTrack?.removeRenderer(remote); remoteTrack = null; remote.clearImage() }
+                        is RoomEvent.TrackSubscribed -> when (val track = event.track) {
+                            is VideoTrack -> attachRemote(track)
+                            is RemoteAudioTrack -> attachRemoteAudio(track)
+                            else -> {}
+                        }
+                        is RoomEvent.TrackUnsubscribed -> {
+                            if (event.track === remoteTrack) { remoteTrack?.removeRenderer(remote); remoteTrack = null; remote.clearImage() }
+                            if (event.track === remoteAudio) { remoteAudio?.removeSink(incomingSink); remoteAudio = null }
+                        }
                         is RoomEvent.Reconnecting -> status.text = "Connection lost. Reconnecting…"
                         is RoomEvent.Reconnected -> status.text = "Connected"
                         is RoomEvent.Disconnected -> { status.text = "Video connection ended"; endCall(true) }
@@ -128,6 +152,12 @@ class CallActivity : Activity() {
                         if (cameraOn) attachLocal() else notices.add("No compatible camera available")
                     } catch (error: Exception) { if (error is CancellationException) throw error; notices.add("No compatible camera available") }
                 } else notices.add("Camera permission denied")
+                attachLocalAudio()
+                active.setSpeakerMute(false)
+                startAudioMeter()
+                DebugEvents.add(this@CallActivity, "Audio profile=${if (tvCompatibility) "TV media/MIC" else "communication"}; USB mic=${CallAudio.hasUsbInput(this@CallActivity)}")
+                active.remoteParticipants.values.firstOrNull()?.getTrackPublication(Track.Source.MICROPHONE)?.track
+                    ?.let { if (it is RemoteAudioTrack) attachRemoteAudio(it) }
                 refreshLabels()
                 active.remoteParticipants.values.firstOrNull()?.getTrackPublication(Track.Source.CAMERA)?.track
                     ?.let { if (it is VideoTrack) attachRemote(it) }
@@ -140,6 +170,34 @@ class CallActivity : Activity() {
                 DebugEvents.add(this@CallActivity, "Media connection failed")
             }
         }
+    }
+    private fun attachLocalAudio() {
+        val track = room?.localParticipant?.getTrackPublication(Track.Source.MICROPHONE)?.track as? LocalAudioTrack
+        if (localAudio === track) return
+        localAudio?.removeSink(micSink); localAudio = track; track?.addSink(micSink)
+    }
+    private fun attachRemoteAudio(track: RemoteAudioTrack) {
+        if (remoteAudio === track) return
+        remoteAudio?.removeSink(incomingSink); remoteAudio = track
+        track.enabled = true; track.setVolume(1.0); track.addSink(incomingSink)
+        DebugEvents.add(this, "Remote audio subscribed")
+    }
+    private fun startAudioMeter() = scope.launch {
+        while (isActive && connected && !ending) {
+            val sending = if (micOn) micLevel.read() else "muted"
+            val receiving = if (remoteAudio == null) "waiting for peer mic" else incomingLevel.read()
+            audioStatus.text = "Mic: $sending · Incoming audio: $receiving"
+            delay(1_000)
+        }
+    }
+    private fun showAudioInfo() {
+        val profile = if (tvCompatibility) "TV media playback / microphone capture" else "Communication audio"
+        val message = "$profile\n${CallAudio.inputDescription(this)}\nRecording route: ${CallAudio.recordingRoute(this)}\n" +
+            "USB mic detected: ${CallAudio.hasUsbInput(this)}\nMicrophone permission: ${hasPermission(Manifest.permission.RECORD_AUDIO)}\n" +
+            "${audioStatus.text}\n\n" +
+            "Video working does not prove the webcam has an Android-compatible microphone. " +
+            "If incoming audio has a level but you hear nothing, check TV Sound → Audio output, mute and volume."
+        AlertDialog.Builder(this).setTitle("Call audio").setMessage(message).setPositiveButton("Close", null).show()
     }
     private fun attachRemote(track: VideoTrack) {
         if (remoteTrack === track) return
@@ -163,7 +221,7 @@ class CallActivity : Activity() {
                 if (video) {
                     if (participant.setCameraEnabled(!cameraOn)) { cameraOn = !cameraOn; if (cameraOn) attachLocal() else local.clearImage() }
                     else status.text = "Camera unavailable"
-                } else if (participant.setMicrophoneEnabled(!micOn)) micOn = !micOn
+                } else if (participant.setMicrophoneEnabled(!micOn)) { micOn = !micOn; attachLocalAudio() }
                 refreshLabels()
             } catch (error: Exception) { if (error is CancellationException) throw error; status.text = "Could not change camera/microphone" }
             finally { if (!ending) controlsEnabled(connected) }
@@ -188,6 +246,7 @@ class CallActivity : Activity() {
         }
     }
     private fun releaseMedia() {
+        localAudio?.removeSink(micSink); remoteAudio?.removeSink(incomingSink); localAudio = null; remoteAudio = null
         localTrack?.removeRenderer(local); remoteTrack?.removeRenderer(remote); localTrack = null; remoteTrack = null
         val closing = room; room = null
         closing?.disconnect(); closing?.release()

@@ -115,3 +115,45 @@ capture. Native camera/audio, USB compatibility and TV presentation remain
 | Different networks / relay | Pending |
 | Controls, remote focus and background cleanup | Pending |
 | Long call / network loss / removal | Pending |
+
+## Audio investigation — 2026-10-31
+
+User reported TV camera video working but neither direction of audio audible.
+Read-only ADB checks on the connected Android 11 TV found:
+
+- HomePing RECORD_AUDIO permission and app-op granted; system mic mute false.
+- During a live call, LiveKit listed both participants with published, unmuted
+  microphone and camera tracks. Publication alone does not prove audible audio.
+- Android recorded HomePing from `VOICE_COMMUNICATION` using a built-in microphone
+  device, not a USB microphone.
+- TV playback was routed to Bluetooth A2DP named `pop-os`, rather than TV speakers.
+- The attached USB camera exposed video-class interfaces but no USB audio-class
+  interface. Android's available audio inputs did not include a USB mic.
+  This does not establish whether the physical camera lacks a mic or its audio
+  interface is unavailable on this firmware. Check the same camera on a PC.
+
+Added TV audio compatibility mode (default ON): normal media output, MIC capture,
+software processing instead of TV hardware call processing, and no audio prewarm.
+Phone calls retain LiveKit communication routing. OFF restores the previous TV
+communication profile for firmware/headset comparisons. Select the mode in TV
+settings before the next call. Volume buttons now target the matching stream.
+
+The native call screen has an Audio info dialog with input availability, Android's
+reported recording route, mic permission and a USB mic flag. Mic and incoming
+PCM peak indicators distinguish no samples, silence and a nonzero signal; they
+are not calibrated loudness or proof of speaker playback. Only in-memory numbers
+are calculated. No audio samples are retained, uploaded as diagnostics or logged.
+
+The rebuilt unified APK and 12 native tests pass, including four signal-meter
+checks (silence vs no samples, full-scale signed PCM, ByteBuffer bounds/position,
+and unsupported formats). Audible output and a real usable TV microphone remain
+pending. Do not mark the USB microphone gate passed or recommend buying a camera
+based on working video alone.
+
+Retest with TV Settings → Sound → Audio output → TV speakers. Install the updated
+APK on both sides, allow the mic and make a call. Note both Mic and Incoming
+levels, open Audio info and record the selected input. If incoming levels move
+but nothing is audible, check playback routing/mute/volume. If TV Mic stays silent
+or has no samples and no USB mic appears, check actual microphone hardware/API
+support independently. Repeat using a browser caller to isolate Android-phone
+capture from TV capture/playback.

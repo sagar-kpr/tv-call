@@ -185,6 +185,8 @@ object Backend {
     fun localDnd(c: Context) = prefs(c).getBoolean("dnd", false)
     fun overlay(c: Context) = prefs(c).getBoolean("overlay", false)
     fun setOverlay(c: Context, value: Boolean) { prefs(c).edit().putBoolean("overlay", value).apply() }
+    fun tvAudioCompatibility(c: Context) = prefs(c).getBoolean("tvAudioCompatibility", true)
+    fun setTvAudioCompatibility(c: Context, value: Boolean) { prefs(c).edit().putBoolean("tvAudioCompatibility", value).apply() }
     fun reliable(c: Context) = prefs(c).getBoolean("reliable", false)
     fun setReliable(c: Context, value: Boolean) {
         prefs(c).edit().putBoolean("reliable", value).apply()

@@ -123,3 +123,19 @@ Complete [HARDWARE_TEST.md](HARDWARE_TEST.md) for the specific model/firmware,
 including remote focus, home-screen prompts, permissions, both media directions,
 idle/reboot behavior and calls across different networks. Successful software
 builds/browser tests do not establish that hardware gate.
+
+### Native audio troubleshooting
+
+TV settings include **TV audio compatibility** (default ON). It selects the TV's
+normal media-output stream and MIC capture source; phones retain the SDK's
+communication/headset profile. Turn it OFF before a new call to compare the
+communication path on other firmware. System sound-output selection still
+applies: if the TV is connected to a Bluetooth speaker/PC, choose TV speakers in
+TV Sound settings when that is where you expect audio.
+
+During a call, **Audio info** reports available microphone types, the Android
+recording route when reported, permission status and USB microphone detection.
+**Mic** and **Incoming audio** indicators show in-memory PCM peaks. They distinguish
+missing callbacks from digital silence and nonzero samples; they do not establish
+speaker audibility or physical USB microphone compatibility. No diagnostic audio
+is stored. A working USB camera can still expose no usable microphone.

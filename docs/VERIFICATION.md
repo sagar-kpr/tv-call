@@ -98,3 +98,26 @@ following backend idle. LiveKit media transport is separate from Render.
 No physical TV was attached. Neither successful builds nor the real browser
 media test establish TV/webcam support. Complete [HARDWARE_TEST.md](HARDWARE_TEST.md)
 before declaring the incoming-call and USB-media gates passed.
+
+## Native audio follow-up — 2026-10-31
+
+The connected Android 11 TV had microphone permission, but playback was routed to
+Bluetooth A2DP `pop-os` and capture used the built-in-mic path. Its USB camera
+advertised no audio-class interface. Both room participants had unmuted published
+audio tracks during the observed test. These observations do not verify audible
+sound, a functioning physical TV mic, or webcam microphone compatibility.
+
+TV media/MIC compatibility mode, stream-volume handling, an audio info dialog,
+explicit remote-track playback enablement and in-memory PCM meters were added.
+The single APK rebuild passes and all 12 native tests pass. Four new tests cover
+PCM meter behavior without recording audio. The phone routing profile is kept.
+The physical audio gate still needs the retest described in HARDWARE_TEST.md.
+
+The rebuilt APK was then installed successfully on the connected TV with
+`adb install -r`; its saved account registration remained valid. In a subsequent
+call the new UI reported a nonzero microphone PCM peak (65%), Android reported
+MIC rather than VOICE_COMMUNICATION capture, and the app logged a remote audio
+subscription. These are signal/routing checks, not a listening test. The system
+output was later reported as wired headphones rather than TV speakers. Actual
+speaker audibility and phone receipt of the TV signal still require confirmation
+from the person at the devices. No microphone audio was recorded for diagnostics.
