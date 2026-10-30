@@ -270,3 +270,10 @@ footer {
     letter-spacing: -1.5px;
   }
 }
+
+.video-call { margin-top: 20px; }
+.video-stage { position: relative; min-height: 200px; background: #14251e; border-radius: 12px; overflow: hidden; }
+.remote-media video { display: block; width: 100%; max-height: 65vh; object-fit: contain; }
+.local-media { position: absolute; width: 25%; max-width: 170px; right: 10px; bottom: 10px; }
+.local-media video { width: 100%; border-radius: 8px; transform: scaleX(-1); }
+.video-call .row-actions { flex-wrap: wrap; }

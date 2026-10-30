@@ -16,10 +16,12 @@
     "android": "npm run android -w @homeping/mobile",
     "test:web": "node scripts/smoke-web.mjs",
     "build:apks": "bash scripts/build-apks.sh",
-    "deploy:firebase": "npm run build -w @homeping/web && firebase deploy --only hosting,firestore:rules"
+    "deploy:firebase": "npm run build -w @homeping/web && firebase deploy --only hosting,firestore:rules",
+    "test:media": "HOMEPING_LIVE_MEDIA_TEST=1 node --env-file=.env --import tsx scripts/test-live-media.mts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "playwright-core": "^1.64.1",
     "typescript": "~5.9.3"
   },

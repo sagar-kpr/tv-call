@@ -6,6 +6,7 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { Calls } from './service.js';
 import { FirestoreStore } from './store.js';
 import { appFor } from './http.js';
+import { Media, mediaConfig } from './media.js';
 import { principalFromToken } from './auth.js';
 
 export function createServer(webDirectory?: string) {
@@ -43,6 +44,8 @@ export function createServer(webDirectory?: string) {
     initializeApp({ credential, projectId: config.projectId });
   }
   const auth = getAuth();
+  const media = new Media(mediaConfig());
+  Object.assign(config, { mediaEnabled: media.enabled });
   const calls = new Calls(
     new FirestoreStore(getFirestore()),
     { send: async (token, data, ttl) => {
@@ -53,8 +56,9 @@ export function createServer(webDirectory?: string) {
       revoke: (uid) => auth.revokeRefreshTokens(uid),
       deleteUser: (uid) => auth.deleteUser(uid),
     },
+    Date.now, undefined, id => media.close(id),
   );
   return appFor(calls, async (token) => {
     return principalFromToken(await auth.verifyIdToken(token, true));
-  }, config, webDirectory);
+  }, config, webDirectory, media);
 }

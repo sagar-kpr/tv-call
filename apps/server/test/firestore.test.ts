@@ -30,5 +30,15 @@ test('Firestore adapter persists account devices and call expiry', { skip: !proc
     assert.ok((await restarted.get({ kind: 'human', uid: 'owner', email: 'x@test' }, call.id)).receivedAt);
     now += 30_001;
     assert.equal((await restarted.get({ kind: 'human', uid: 'owner', email: 'x@test' }, call.id)).status, 'missed');
+    const mediaCall = await restarted.create('owner', id);
+    await restarted.action(tv, mediaCall.id, 'accept');
+    now += 10_000;
+    await restarted.mediaSession(tv, mediaCall.id, true);
+    await restarted.mediaSession({ kind: 'human', uid: 'owner', email: 'x@test' }, mediaCall.id, true);
+    const anotherRestart = new Calls(new FirestoreStore(db), { send: async () => {} }, auth, () => now);
+    assert.equal((await anotherRestart.get(tv, mediaCall.id)).status, 'accepted');
+    now += 90_001;
+    assert.equal((await anotherRestart.get(tv, mediaCall.id)).status, 'ended');
+    await anotherRestart.removeDevice('owner', id);
   } finally { await db.terminate(); await deleteApp(app); }
 });

@@ -4,6 +4,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { Calls, Fault, type Principal, type TvPrincipal } from './service.js';
 import type { PublicConfig } from '../../../packages/client/src/index.js';
+import { Media } from './media.js';
 import { authenticationFault } from './auth.js';
 
 const identifier = z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/);
@@ -33,6 +34,7 @@ export function appFor(
   verify: (token: string) => Promise<Principal>,
   config: PublicConfig,
   webDirectory?: string,
+  media = new Media(),
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -113,6 +115,14 @@ export function appFor(
   app.post('/api/devices/:deviceId/calls', callLimit, callHourLimit, async (req, res) =>
     res.status(201).json(await calls.create(human(res).uid, deviceId.parse(req.params.deviceId))));
   app.get('/api/calls/:id', async (req, res) => res.json(await calls.get(principal(res), identifier.parse(req.params.id))));
+  const mediaLimit = rateLimit({ windowMs: 60_000, limit: 12, standardHeaders: 'draft-8', legacyHeaders: false,
+    keyGenerator: (_req, res) => (res.locals.principal as Principal).uid });
+  app.post('/api/calls/:id/media', mediaLimit, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(await media.join(calls, principal(res), identifier.parse(req.params.id)));
+  });
+  app.post('/api/calls/:id/heartbeat', async (req, res) =>
+    res.json(await calls.mediaSession(principal(res), identifier.parse(req.params.id), true)));
   app.post('/api/calls/:id/action', async (req, res) => {
     const body = z.object({ action: z.enum(['receive', 'accept', 'decline', 'cancel', 'end']) }).strict().parse(req.body);
     res.json(await calls.action(principal(res), identifier.parse(req.params.id), body.action));

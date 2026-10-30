@@ -135,6 +135,7 @@ test('HTTP requires verified principals and rejects forbidden fields', async () 
   const app = appFor(service, async (token) => {
     if (token === 'owner') return human();
     if (token === 'tv') return tv;
+    if (token === 'stranger') return human('stranger');
     throw new Fault(401, 'bad');
   }, { apiKey: 'public', projectId: 'test', androidAppId: 'test', messagingSenderId: '1' });
   const server = app.listen(0, '127.0.0.1');
@@ -149,7 +150,59 @@ test('HTTP requires verified principals and rejects forbidden fields', async () 
       method: 'PATCH', headers, body: JSON.stringify({ model: 'Fake' }),
     })).status, 400);
     assert.equal((await fetch(`${base}/api/devices`, { headers: { Authorization: 'Bearer tv' } })).status, 403);
+    const call = await service.create('owner', deviceId);
+    const media = `${base}/api/calls/${call.id}/media`;
+    assert.equal((await fetch(media, { method: 'POST' })).status, 401);
+    assert.equal((await fetch(media, { method: 'POST', headers })).status, 409);
+    await service.action(tv, call.id, 'accept');
+    assert.equal((await fetch(media, { method: 'POST', headers: { Authorization: 'Bearer stranger' } })).status, 403);
+    assert.equal((await fetch(media, { method: 'POST', headers })).status, 503);
+    assert.equal((await fetch(`${base}/api/calls/${call.id}/heartbeat`, { method: 'POST', headers })).status, 200);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve()));
   }
+});
+
+test('media credentials require acceptance, ownership and an existing TV', async () => {
+  const { service } = await setup();
+  const call = await service.create('owner', deviceId);
+  await assert.rejects(service.mediaSession(human(), call.id), { status: 409 });
+  await service.action(tv, call.id, 'accept');
+  await assert.rejects(service.mediaSession(human('stranger'), call.id), { status: 403 });
+  await assert.rejects(service.mediaSession({ ...tv, deviceId: 'another-tv' }, call.id), { status: 403 });
+  assert.equal((await service.mediaSession(tv, call.id)).status, 'accepted');
+  await service.removeDevice('owner', deviceId);
+  await assert.rejects(service.mediaSession(tv, call.id), { status: 403 });
+  await assert.rejects(service.mediaSession(human(), call.id), { status: 409 });
+});
+
+test('either side can end media, repeats are idempotent and new joins fail', async () => {
+  const { service } = await setup();
+  for (const ender of [human(), tv]) {
+    const call = await service.create('owner', deviceId);
+    await service.action(tv, call.id, 'accept');
+    const ended = await service.action(ender, call.id, 'end');
+    assert.equal(ended.status, 'ended');
+    assert.deepEqual(await service.action(ender, call.id, 'end'), ended);
+    await assert.rejects(service.mediaSession(ender, call.id), { status: 409 });
+  }
+});
+
+test('media lease needs heartbeats from both sides; one crashed peer expires', async () => {
+  const { service, advance } = await setup();
+  const call = await service.create('owner', deviceId);
+  await service.action(tv, call.id, 'accept');
+  for (let index = 0; index < 5; index++) {
+    advance(20_000);
+    if (index < 4) {
+      await service.mediaSession(human(), call.id, true);
+      await service.mediaSession(tv, call.id, true);
+    }
+  }
+  assert.equal((await service.get(human(), call.id)).status, 'accepted');
+  for (let index = 0; index < 3; index++) { advance(20_000); await service.mediaSession(human(), call.id, true); }
+  advance(10_000);
+  assert.equal((await service.get(human(), call.id)).status, 'ended');
+  await assert.rejects(service.mediaSession(tv, call.id), { status: 409 });
+  assert.equal((await service.create('owner', deviceId)).status, 'ringing');
 });

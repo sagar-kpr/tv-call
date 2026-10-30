@@ -131,6 +131,11 @@ function Caller({ api, backend, user, setError }: { api: Api; backend: string; u
     } as Record<string,string>)[call.status]}</Text>
       {call.status === 'ringing' && <><Text style={styles.muted}>{call.receivedAt ? 'TV received the invitation' : 'Waiting for TV'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</Text>
         <Button title="Cancel" disabled={busy} onPress={() => void run(async () => setCall(await api.cancel(call.id)))} /></>}
+      {call.status === 'accepted' && <><Button title="Join video call" disabled={busy} onPress={() => void run(async () => {
+        if (!NativeModules.HomePingMode?.startCall) throw new Error('Install the updated HomePing APK to use video calls.');
+        await NativeModules.HomePingMode.startCall(call.id, await user.getIdToken(), user.refreshToken, getAuth().app.options.apiKey);
+      })} />
+      <Button danger title="End call" disabled={busy} onPress={() => void run(async () => setCall(await api.end(call.id)))} /></>}
     </View>}
     <Pressable onPress={() => void signOut(getAuth())}><Text style={styles.link}>Sign out {user.email}</Text></Pressable>
   </View>;

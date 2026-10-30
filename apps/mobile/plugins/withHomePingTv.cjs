@@ -22,7 +22,7 @@ module.exports = function withHomePingTv(config) {
     const permissions = [
       'INTERNET', 'ACCESS_NETWORK_STATE', 'POST_NOTIFICATIONS', 'USE_FULL_SCREEN_INTENT',
       'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC', 'SYSTEM_ALERT_WINDOW', 'RECEIVE_BOOT_COMPLETED',
-      'CAMERA', 'RECORD_AUDIO',
+      'CAMERA', 'RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS',
     ];
     manifest['uses-permission'] ??= [];
     for (const name of permissions) {
@@ -99,6 +99,8 @@ dependencies {
     implementation "androidx.work:work-runtime-ktx:2.10.1"
     implementation "androidx.security:security-crypto:1.1.0-alpha06"
     implementation "com.google.zxing:core:3.5.3"
+    implementation "io.livekit:livekit-android:2.29.2"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
     testImplementation "junit:junit:4.13.2"
 }
 `;

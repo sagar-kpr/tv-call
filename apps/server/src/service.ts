@@ -27,7 +27,9 @@ type CodeLookup = { authorizationId: string; expiresAt: number };
 type DeviceOwner = { ownerUid: string; authUid: string };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (call: Call, now: number): Call =>
-  call.status === 'ringing' && call.expiresAt <= now ? { ...call, status: 'missed', updatedAt: now } : call;
+  call.status === 'ringing' && call.expiresAt <= now ? { ...call, status: 'missed', updatedAt: now } :
+  call.status === 'accepted' && (call.mediaDeadline ?? call.updatedAt + 90_000) <= now
+    ? { ...call, status: 'ended', error: 'media-session-expired', updatedAt: now } : call;
 const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const generateCode = () => Array.from(randomBytes(8), (b) => codeAlphabet[b % codeAlphabet.length]).join('');
 const publicDevice = (device: StoredDevice): TvDevice => {
@@ -42,6 +44,7 @@ export class Calls {
     private auth: DeviceAuthAdmin,
     private now = Date.now,
     private userCode = generateCode,
+    private closeMedia: (id: string) => Promise<void> = async () => {},
   ) {}
 
   async account(principal: HumanPrincipal) {
@@ -197,12 +200,16 @@ export class Calls {
   async removeDevice(ownerUid: string, deviceId: string) {
     const authUid = await this.store.run(async (tx) => {
       const device = await this.ownedDevice(tx, ownerUid, deviceId);
+      const call = device.activeCallId ? await tx.get<Call>(`calls/${device.activeCallId}`) : undefined;
+      if (call && ['ringing', 'accepted'].includes(call.status))
+        tx.set(`calls/${call.id}`, { ...call, status: 'ended', updatedAt: this.now(), error: 'device-removed' });
       tx.delete(`users/${ownerUid}/devices/${deviceId}`);
       tx.delete(`deviceOwners/${deviceId}`);
-      return device.authUid;
+      return { uid: device.authUid, callId: device.activeCallId };
     });
-    await this.auth.revoke(authUid);
-    try { await this.auth.deleteUser(authUid); } catch (error) {
+    if (authUid.callId) await this.cleanupMedia(authUid.callId);
+    await this.auth.revoke(authUid.uid);
+    try { await this.auth.deleteUser(authUid.uid); } catch (error) {
       if ((error as { code?: string }).code !== 'auth/user-not-found') throw error;
     }
   }
@@ -264,22 +271,45 @@ export class Calls {
     return this.get({ kind: 'human', uid: ownerUid, email: '' }, id);
   }
   async get(principal: Principal, id: string) {
-    return this.store.run(async (tx) => {
+    const result = await this.store.run(async (tx) => {
       const call = await tx.get<Call>(`calls/${id}`);
       if (!call) throw new Fault(404, 'Call not found');
       const allowed = principal.kind === 'human' ? principal.uid === call.ownerUid :
         principal.ownerUid === call.ownerUid && principal.deviceId === call.deviceId;
       if (!allowed) throw new Fault(403, 'Not your call');
+      if (principal.kind === 'tv') await this.tvDevice(tx, principal);
       const current = live(call, this.now());
       if (current.status !== call.status) tx.set(`calls/${id}`, current);
       return current;
+    });
+    if (result.status === 'ended') await this.cleanupMedia(id);
+    return result;
+  }
+  private async cleanupMedia(id: string) {
+    try { await this.closeMedia(id); }
+    catch { console.error('LiveKit room cleanup failed; next status read will retry'); }
+  }
+  async mediaSession(principal: Principal, id: string, heartbeat = false) {
+    const call = await this.get(principal, id);
+    if (call.status !== 'accepted') throw new Fault(409, `Call is ${call.status}`);
+    return this.store.run(async (tx) => {
+      // Recheck ownership and state within the same transaction as the lease.
+      const device = await this.ownedDevice(tx, call.ownerUid, call.deviceId);
+      if (principal.kind === 'tv' && device.authUid !== principal.uid) throw new Fault(403, 'TV authorization was removed');
+      const raw = await tx.get<Call>(`calls/${id}`);
+      if (!raw || live(raw, this.now()).status !== 'accepted') throw new Fault(409, 'Call is no longer accepted');
+      if (!heartbeat) return raw;
+      const next = { ...raw, [principal.kind === 'tv' ? 'tvSeenAt' : 'callerSeenAt']: this.now() };
+      next.mediaDeadline = Math.min(next.callerSeenAt ?? 0, next.tvSeenAt ?? 0) + 90_000;
+      tx.set(`calls/${id}`, next);
+      return next;
     });
   }
   async action(principal: Principal, id: string, action: 'receive' | 'accept' | 'decline' | 'cancel' | 'end') {
     const result = await this.store.run(async (tx) => {
       const raw = await tx.get<Call>(`calls/${id}`);
       if (!raw) throw new Fault(404, 'Call not found');
-      const tvAction = ['receive', 'accept', 'decline', 'end'].includes(action);
+      const tvAction = ['receive', 'accept', 'decline'].includes(action) || (action === 'end' && principal.kind === 'tv');
       if (tvAction) {
         if (principal.kind !== 'tv' || principal.ownerUid !== raw.ownerUid || principal.deviceId !== raw.deviceId)
           throw new Fault(403, 'Action forbidden');
@@ -294,7 +324,9 @@ export class Calls {
       } else if (call.status === target[action]) {
         // idempotent retry
       } else if ((call.status === 'ringing' && ['accept', 'decline', 'cancel'].includes(action)) || (call.status === 'accepted' && action === 'end')) {
-        call = { ...call, status: target[action], updatedAt: this.now() };
+        call = { ...call, status: target[action], updatedAt: this.now(),
+          ...(action === 'accept' ? { acceptedAt: this.now(), callerSeenAt: this.now(), tvSeenAt: this.now(), mediaDeadline: this.now() + 90_000 } : {}),
+        };
       } else {
         if (call.status !== raw.status) tx.set(`calls/${id}`, call);
         return { call, conflict: true, token: device?.fcmToken };
@@ -304,6 +336,7 @@ export class Calls {
         tx.set(path, { ...device, activeCallId: null });
       return { call, conflict: false, token: device?.fcmToken };
     });
+    if (result.call.status === 'ended') await this.cleanupMedia(id);
     if (result.conflict) throw new Fault(409, `Call is ${result.call.status}`);
     if (action === 'cancel' && result.token) {
       try { await this.push.send(result.token, { type: 'cancel', callId: id, expiresAt: String(result.call.expiresAt) }, 0); } catch { /* polling reconciles */ }

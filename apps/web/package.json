@@ -10,6 +10,7 @@
   "dependencies": {
     "@homeping/client": "0.1.0",
     "firebase": "^12.19.0",
+    "livekit-client": "^2.23.0",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

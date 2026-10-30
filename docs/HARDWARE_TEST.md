@@ -26,12 +26,12 @@ Status: **NOT VERIFIED ON HARDWARE**. No claim of notification visibility, remot
 
 1. Configure Firebase and start backend + HTTPS tunnel as in README. Confirm Anonymous sign-in is disabled and Firebase's Android app ID matches `dev.tvcall.caller`. Synchronize PC/phone/TV clocks with network time. Install the same `artifacts/homeping.apk` on TV and phone. Verify automatic TV receiver versus phone caller selection. Sign into phone/web with the same verified account. Open TV setup once, record the detected fields, scan its authorization QR, verify the warning and brand/model, and approve it.
 2. Start with overlay OFF. Press Home, disconnect ADB/network debugging, and wait at least one minute. Use a caller over mobile data or a different network. Record whether a prompt actually appears over the launcher, whether Accept/Reject are reachable with the remote, and whether OK activates the highlighted action.
-3. Accept, verify the placeholder opens only after acceptance, then End and verify Home returns. Repeat with Reject, Cancel, and no answer. Check the caller state each time. Acknowledgment alone is not a visual pass.
-4. If standard notifications fail, document the exact failure. Enable overlay permission once (settings or documented ADB appops), then disconnect ADB and repeat. Record input focus, underlying launcher interaction, and activity launch. If this also fails, stop before WebRTC and assess another Android TV device; do not label this milestone passed.
+3. Accept, verify the native video screen opens only after acceptance, then End and verify Home returns. Repeat with Reject, Cancel, and no answer. Check the caller state each time. Acknowledgment alone is not a visual pass.
+4. If standard notifications fail, document the exact failure. Enable overlay permission once (settings or documented ADB appops), then disconnect ADB and repeat. Record input focus, underlying launcher interaction, and activity launch. If this also fails, record the notification gate as failed and assess another Android TV device; do not label this milestone passed.
 5. Run ten invitations **per caller**, including after **30 minutes idle**. Keep backend/tunnel running. Each prompt must appear within **10 seconds** under healthy connectivity. Record all attempts rather than discarding failures.
 6. Repeat background tests after OS process termination (`adb shell am kill dev.tvcall.caller` while backgrounded), disconnect ADB, and call again. Repeat after a full TV reboot/network restoration without opening HomePing. Record timing separately from ordinary idle tests.
 7. Test explicit force-stop (`adb shell am force-stop dev.tvcall.caller`) separately. Android normally leaves a force-stopped package unable to receive pushes until the user launches it again. Record that limitation and verify recovery by opening the app once; do not treat force-stop as ordinary process death.
-8. Test TV Wi-Fi loss/restoration, phone network loss, and backend/tunnel interruption. Invite while TV offline, wait beyond 30 seconds, reconnect, and verify no accepted placeholder appears. Cancel while TV temporarily offline; verify stale actions fail after reconnection. Turn network off during acceptance: the TV must show an error rather than claim acceptance.
+8. Test TV Wi-Fi loss/restoration, phone network loss, and backend/tunnel interruption. Invite while TV offline, wait beyond 30 seconds, reconnect, and verify no accepted call screen appears. Cancel while TV temporarily offline; verify stale actions fail after reconnection. Turn network off during acceptance: the TV must show an error rather than claim acceptance.
 9. Trigger simultaneous calls from web/Android: exactly one rings; the other reports Busy. Enable Do Not Disturb and confirm the caller immediately reports Declined with no TV prompt. Duplicate a push in a controlled test: one invitation, one expiry, no duplicate acceptance. Refresh the FCM token and confirm registration retries and new invitations.
 10. Restart the backend while ringing. Reconnect before expiry to verify the persisted call; after expiry, verify acceptance fails. Test dropped cancellation push with server polling still available.
 
@@ -71,4 +71,47 @@ See `docs/VERIFICATION.md` for checks executed in this workspace. Emulator tests
 
 ## Decision
 
-Pending. Pass requires both callers, visible and remote-operable Accept/Reject on the real home screen, accepted placeholder launch, return Home, required repetition/latency tests, and documented lifecycle results. If boot delivery needs reopening the app, the requested unattended workflow has failed that condition. Sleep/wake from powered-off or standby is outside this first milestone; TV is assumed on at its home screen.
+Pending. Pass requires both callers, visible and remote-operable Accept/Reject on the real home screen, accepted call screen launch, return Home, required repetition/latency tests, and documented lifecycle results. If boot delivery needs reopening the app, the requested unattended workflow has failed that condition. Sleep/wake from powered-off or standby is outside this first milestone; TV is assumed on at its home screen.
+
+
+## LiveKit media gate (separate from the invitation gate)
+
+Software browser media test passed with real LiveKit transport and synthetic
+capture. Native camera/audio, USB compatibility and TV presentation remain
+**NOT VERIFIED ON HARDWARE**. Configure [LiveKit](LIVEKIT.md) before this test.
+
+1. Install the new single APK on both devices and deploy the new API and web
+   assets. Accept a call on TV; select Join video call on the phone/web. Verify
+   camera and microphone runtime prompts with the remote, including clear focus.
+2. Test grant, deny, and permanently deny for each permission. Missing inputs
+   must produce a visible message; remote playback and remaining inputs should
+   still work. No camera/mic capture is allowed on an idle/ringing TV.
+3. Record cameraApiCount before/after attaching a USB camera, the selected camera,
+   and both remote video reception and actual microphone input. A USB attachment
+   flag alone does not pass. This build needs a camera exposed through Android's
+   camera APIs; no separate UVC driver is included. Do not purchase hardware
+   without confirming this on the target firmware.
+4. Check local preview, remote video, microphone mute/unmute, camera off/on,
+   camera switching when multiple cameras exist, USB mic routing and TV speaker
+   volume. Check echo/audio feedback at normal TV volume.
+5. Test End from each peer, remote Back, phone Home, TV Home, process kill,
+   Wi-Fi loss/restoration, and backend restart during media. Camera/mic indicators
+   must stop after leaving the Android call screen. An absent peer must release
+   the accepted session after its 90-second lease expires on the next status
+   request. End/removal must reject new room credentials and close the room.
+6. Test a phone on mobile data while TV uses home internet, then restrictive
+   networks. Record LiveKit connection/relay behavior; same-network success is
+   insufficient. Test long calls beyond one hour to exercise Firebase token
+   refresh on the native phone screen.
+7. Confirm a second account/another TV cannot get room credentials, a cancelled
+   or expired invite cannot join, and TV removal disconnects an active call.
+
+| Media observation | Result |
+| --- | --- |
+| Model / firmware and permissions | Pending |
+| Camera API device / USB camera / microphone | Pending |
+| Phone ↔ TV video and audio | Pending |
+| Web ↔ TV video and audio | Pending |
+| Different networks / relay | Pending |
+| Controls, remote focus and background cleanup | Pending |
+| Long call / network loss / removal | Pending |

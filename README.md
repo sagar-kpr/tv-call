@@ -1,17 +1,20 @@
-# HomePing — TV incoming-call proof of concept
+# HomePing — Android TV video calling
 
 HomePing links an Android TV / Google TV from any brand to a verified Firebase account and lets that
 account send an incoming-call invitation from the web or Android caller. The TV
-can show Accept/Reject while it is on the launcher. This milestone has no audio,
-video, WebRTC, or TV-to-phone calling. Camera/microphone permissions are declared
-for future media work, with optional hardware features; the invitation flow does
-not request or use them. External storage permissions remain blocked.
+can show Accept/Reject while it is on the launcher. After acceptance, LiveKit connects two-way audio/video between the TV and the
+phone/web caller. Runtime camera/microphone permissions are requested when
+joining a call. Hardware features remain optional; external storage permissions
+remain blocked. TV-to-phone calling is not included. Hardware compatibility is
+still unverified.
 
 One Android APK contains a Kotlin TV receiver and a React Native/Expo phone
 caller. It detects the device on launch: television UI mode OR Leanback opens
 the TV receiver; other devices open the phone caller. The browser is React/Vite,
 and the Node.js/TypeScript server uses Firebase Auth,
-Firestore, and high-priority data-only FCM.
+Firestore, and high-priority data-only FCM. LiveKit supplies media transport;
+see [LiveKit setup and testing](docs/LIVEKIT.md) for the three server-only
+environment settings and deployment steps.
 
 ## Account and TV authorization flow
 
@@ -184,7 +187,12 @@ The caller lists all TVs under the signed-in account with brand/model and
 last-seen time. It does not claim a TV is online. Calls can become Ringing,
 Accepted, Declined, Missed, Busy, Cancelled, Ended, or Failed. DND immediately
 returns Declined without sending FCM. One ringing/accepted call is allowed per
-TV and ringing expires after 30 seconds.
+TV and ringing expires after 30 seconds. After acceptance select Join video call
+on the caller and allow camera/mic permissions. The TV joins directly after
+acceptance. Both sides have mute/camera/End controls, and Android also has camera
+switching. Missing or denied inputs are displayed. End on TV returns Home; End
+on the phone returns to its caller screen. Leaving the native call screen ends
+capture. A 90-second peer-heartbeat lease releases abandoned accepted calls.
 
 Start with the experimental overlay off. Android first receives a high-priority
 FCM message and posts a high-importance call notification with Accept/Reject

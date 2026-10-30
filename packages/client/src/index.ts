@@ -11,6 +11,7 @@ export type Call = {
   id: string; deviceId: string; ownerUid: string; callerUid: string;
   status: CallStatus; createdAt: number; expiresAt: number;
   delivery: 'pending' | 'submitted' | 'failed' | 'not-sent';
+  acceptedAt?: number; callerSeenAt?: number; tvSeenAt?: number; mediaDeadline?: number;
   receivedAt?: number; updatedAt: number; error?: string;
 };
 export type TvDevice = {
@@ -24,7 +25,7 @@ export type TvDevice = {
 export type PublicConfig = {
   apiKey: string; projectId: string; androidAppId: string; messagingSenderId: string;
   authDomain?: string; googleWebClientId?: string; googleAndroidClientId?: string;
-  webUrl?: string;
+  webUrl?: string; mediaEnabled?: boolean;
 };
 async function jsonFetch(url: string, options: RequestInit = {}, timeoutMs = 12_000) {
   const controller = new AbortController();
@@ -76,6 +77,9 @@ export class Api {
   removeDevice(deviceId: string) { return this.request<void>(`/devices/${deviceId}`, undefined, 'DELETE'); }
   call(deviceId: string) { return this.request<Call>(`/devices/${deviceId}/calls`, {}); }
   getCall(id: string) { return this.request<Call>(`/calls/${id}`); }
+  media(id: string) { return this.request<{ url: string; token: string }>(`/calls/${id}/media`, {}); }
+  heartbeat(id: string) { return this.request<Call>(`/calls/${id}/heartbeat`, {}); }
+  end(id: string) { return this.request<Call>(`/calls/${id}/action`, { action: 'end' }); }
   cancel(id: string) { return this.request<Call>(`/calls/${id}/action`, { action: 'cancel' }); }
   approveDevice(code: string) {
     return this.request<{ deviceId: string; name: string }>('/device-authorizations/approve', { code });

@@ -13,7 +13,7 @@ identity.
 
 | Method and path | Authentication | Body / result |
 | --- | --- | --- |
-| GET `/config` | Public | Firebase public configuration and optional Google OAuth client IDs |
+| GET `/config` | Public | Firebase public configuration, optional Google OAuth client IDs, and `mediaEnabled`; no LiveKit credentials |
 | POST `/account` | Verified human | Idempotent profile sync at `users/{uid}`; returns uid, email, and timestamps |
 | POST `/device-authorizations` | Bootstrap secret | `{registration, deviceSecret}` → code, authorization ID, ten-minute expiry, poll interval |
 | POST `/device-authorizations/poll` | Authorization ID + secret | Pending status or a one-time Firebase custom token |
@@ -37,7 +37,9 @@ Registration fields are `deviceId`, `manufacturer`, `model`,
 | --- | --- | --- |
 | POST `/devices/:deviceId/calls` | Owner | Create invitation; terminal Declined for DND or Busy for an occupied TV |
 | GET `/calls/:callId` | Owner or target TV | Current authoritative state |
-| POST `/calls/:callId/action` | Role-dependent | `{action}` where action is `receive`, `accept`, `decline`, `cancel`, or `end` |
+| POST `/calls/:callId/action` | Role-dependent | `{action}` where action is `receive`, `accept`, `decline`, `cancel`, or `end`; either participant may end |
+| POST `/calls/:callId/media` | Owner or exact active TV | Accepted calls only; `{url, token}` for one private LiveKit room; `Cache-Control: no-store` |
+| POST `/calls/:callId/heartbeat` | Owner or exact active TV | Accepted calls only; updates that role's media lease and returns call |
 
 Call fields:
 
@@ -53,6 +55,10 @@ Call fields:
   expiresAt: number
   updatedAt: number
   delivery: "pending" | "submitted" | "failed" | "not-sent"
+  acceptedAt?: number
+  callerSeenAt?: number
+  tvSeenAt?: number
+  mediaDeadline?: number
   receivedAt?: number
   error?: string
 }
@@ -94,3 +100,23 @@ Errors use `{error: string}`, with validation details where applicable:
 400 invalid input/code, 401 invalid or unverified authentication, 403 ownership
 or role failure, 404 missing resource, 409 state conflict, 410 expired device
 authorization, and 429 rate limit.
+
+
+## Media
+
+The backend reads `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
+These settings never appear in public configuration; the media endpoint returns
+only the server URL and a 60-second participant JWT. The server assigns
+`homeping-{callId}` and `{human|tv}-{callId}` identities, creates a two-participant
+room, and grants camera/microphone publication and subscription only. No client
+selects a room, moderation grants or another participant's identity.
+
+Media token requests are limited to twelve per principal per minute. Ringing,
+missed, cancelled, declined, ended, or failed calls return 409; missing LiveKit
+configuration/service returns 503. Ownership/TV authorization is checked again
+inside the media transaction. Caller and TV heartbeat every ten seconds. The
+older peer's heartbeat plus 90 seconds is the accepted-call deadline; status
+reads reconcile expired sessions to Ended. End and device removal request room
+deletion; clients also disconnect and stop their own capture. Previously issued
+bearer tokens remain valid until expiry, so new-token refusal is not instant
+JWT revocation. See [LIVEKIT.md](LIVEKIT.md) for deployment and lifecycle details.

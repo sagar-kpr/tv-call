@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getApps, initializeApp } from 'firebase/app';
 import {
@@ -12,6 +12,7 @@ import {
   type Call, type PublicConfig, type TvDevice,
 } from '@homeping/client';
 import './style.css';
+const VideoCall = lazy(() => import('./VideoCall').then(module => ({ default: module.VideoCall })));
 
 const backendUrl = (import.meta.env.VITE_HOMEPING_API_URL || location.origin).replace(/\/+$/, '');
 
@@ -133,6 +134,7 @@ function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
       {call.status === 'ringing' && <><p>{call.receivedAt ? 'TV received the invitation' : call.delivery === 'submitted' ? 'Invitation sent' : 'Sending'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</p>
       <button className="secondary" disabled={busy} onClick={() => run(async () => setCall(await api.cancel(call.id)))}>Cancel</button></>}
     </div>}
+    {call?.status === 'accepted' && <Suspense fallback={<p>Opening call controls…</p>}><VideoCall key={call.id} api={api} call={call} changed={setCall} /></Suspense>}
     {!settings && devices.length > 0 && <button className="link" onClick={() => setActivate(true)}>Authorize another TV</button>}
     {error && <div className="error">{error}</div>}
   </section>;
@@ -159,7 +161,7 @@ function App() {
       !user.emailVerified ? <Verification user={user} onError={setError} /> :
       <Caller api={api!} activationCode={activationCode} />}
     {error && <div className="error global" role="alert">{error}</div>}
-    <p className="footnote">HomePing currently sends invitations only. Video and audio are not included.</p>
+    <p className="footnote">Call your TV with HomePing. Camera and microphone access are requested when you join.</p>
   </main>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
