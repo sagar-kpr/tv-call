@@ -24,20 +24,21 @@ class IncomingActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         id = intent.getStringExtra("callId") ?: run { finish(); return }
-        val layout = Ui.column(this)
-        layout.addView(Ui.text(this, "Incoming TV call", 36f))
-        val status = Ui.text(this, "Checking invitation…")
-        layout.addView(status)
-        val accept = Ui.button(this, "Accept") {
+        val status = TvUi.text(this, "Checking invitation…", 14f, true)
+        val prompt = TvUi.incoming(this, accept = {
             startActivity(Alerts.activity(this, CallActivity::class.java, id, "accept")); finish()
-        }.apply { isEnabled = false }
-        val reject = Ui.button(this, "Reject") {
+        }, reject = {
             Backend.io.execute {
-                try { Backend.action(this, id, "decline"); DebugEvents.add(this, "Call ${id.take(8)} declined"); runOnUiThread { dismiss(); finish() } }
-                catch(e: Exception) { runOnUiThread { status.text = "Could not reject: ${e.message}" } }
+                try { Backend.action(this, id, "decline"); runOnUiThread { dismiss(); finish() } }
+                catch (_: Exception) { runOnUiThread { status.text = "Could not reject. Please try again." } }
             }
-        }.apply { isEnabled = false }
-        layout.addView(accept); layout.addView(reject); setContentView(layout)
+        })
+        val accept = prompt.accept.apply { isEnabled = false }
+        val reject = prompt.reject.apply { isEnabled = false }
+        prompt.panel.addView(status)
+        val layout = TvUi.screen(this).apply { gravity = android.view.Gravity.CENTER }
+        layout.addView(prompt.panel, android.widget.LinearLayout.LayoutParams(minOf(TvUi.dp(this, 560), (resources.displayMetrics.widthPixels * .85f).toInt()), -2))
+        setContentView(layout)
         Backend.io.execute {
             try {
                 val call = Backend.action(this, id, "receive")

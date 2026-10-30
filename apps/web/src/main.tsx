@@ -16,6 +16,11 @@ const VideoCall = lazy(() => import('./VideoCall').then(module => ({ default: mo
 
 const backendUrl = (import.meta.env.VITE_HOMEPING_API_URL || location.origin).replace(/\/+$/, '');
 
+function BusyOverlay({ visible, label = 'Please wait…' }: { visible: boolean; label?: string }) {
+  if (!visible) return null;
+  return <div className="busy-backdrop"><div className="busy-card" role="status" aria-live="polite"><span className="spinner" aria-hidden="true" />{label}</div></div>;
+}
+
 function AuthScreen({ config, onError }: { config: PublicConfig; onError: (value: string) => void }) {
   const auth = getAuth();
   const [email, setEmail] = useState(''), [password, setPassword] = useState('');
@@ -26,7 +31,7 @@ function AuthScreen({ config, onError }: { config: PublicConfig; onError: (value
     try { await action(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); }
   }
   return <section className="card">
-    <h2>{mode === 'signup' ? 'Create your HomePing account' : mode === 'forgot' ? 'Reset your password' : 'Sign in to HomePing'}</h2>
+    <BusyOverlay visible={busy} label={mode === 'forgot' ? 'Sending reset email…' : mode === 'signup' ? 'Creating your account…' : 'Signing in…'} /><h2>{mode === 'signup' ? 'Create your HomePing account' : mode === 'forgot' ? 'Reset your password' : 'Sign in to HomePing'}</h2>
     <p className="muted">Use the same verified account on your phone, browser, and TV.</p>
     <label className="field">Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
     {mode !== 'forgot' && <label className="field">Password<input className="normal-input" type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
@@ -53,7 +58,7 @@ function Verification({ user, onError }: { user: User; onError: (value: string) 
     setBusy(true); onError('');
     try { await fn(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); }
   };
-  return <section className="card"><h2>Verify your email</h2>
+  return <section className="card"><BusyOverlay visible={busy} label="Checking your account…" /><h2>Verify your email</h2>
     <p className="muted">We sent a verification link to <strong>{user.email}</strong>. Verify it before using HomePing.</p>
     <button className="primary" disabled={busy} onClick={() => run(async () => { await reload(user); if (!user.emailVerified) throw new Error('Email is not verified yet.'); await user.getIdToken(true); location.reload(); })}>I verified my email</button>
     <button className="secondary" disabled={busy} onClick={() => run(() => sendEmailVerification(user))}>Resend verification email</button>
@@ -70,7 +75,7 @@ function Activation({ api, initialCode, done }: { api: Api; initialCode: string;
   };
   useEffect(() => { if (initialCode) void inspect(); }, []);
   return <section className="card">
-    <h2>Authorize your TV</h2>
+    <BusyOverlay visible={busy} label="Connecting your TV…" /><h2>Authorize your TV</h2>
     <div className="warning">Approve only if this code is on your own TV.</div>
     <label className="field">TV code<input value={code} maxLength={9} onChange={e => { setCode(e.target.value.toUpperCase()); setPreview(null); }} /></label>
     {!preview ? <button className="primary" disabled={busy || code.replace(/\W/g, '').length !== 8} onClick={inspect}>Check TV</button> :
@@ -86,7 +91,7 @@ function Activation({ api, initialCode, done }: { api: Api; initialCode: string;
 
 function DeviceEditor({ device, api, changed }: { device: TvDevice; api: Api; changed: () => Promise<void> }) {
   const [name, setName] = useState(device.name), [room, setRoom] = useState(device.room ?? ''), [busy, setBusy] = useState(false);
-  return <div className="device-row">
+  return <div className="device-row"><BusyOverlay visible={busy} label="Updating your TV…" />
     <label className="field">Name<input className="normal-input" value={name} onChange={e => setName(e.target.value)} /></label>
     <label className="field">Room<input className="normal-input" value={room} onChange={e => setRoom(e.target.value)} /></label>
     <p className="muted">{device.manufacturer} {device.model} · {lastSeenLabel(device.lastSeen)}</p>
@@ -104,8 +109,9 @@ function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
   const [devices, setDevices] = useState<TvDevice[]>([]), [call, setCall] = useState<Call | null>(null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [clock, setClock] = useState(Date.now());
   const [activate, setActivate] = useState(!!activationCode), [settings, setSettings] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(true);
   const load = async () => setDevices(await api.devices());
-  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)); }, []);
+  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)).finally(() => setLoadingDevices(false)); }, []);
   useEffect(() => {
     if (!call || isTerminal(call.status)) return;
     const timer = setInterval(async () => {
@@ -118,11 +124,12 @@ function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
     setBusy(true); setError(''); try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
   if (activate) return <Activation api={api} initialCode={activationCode} done={() => { history.replaceState({}, '', '/'); setActivate(false); void load(); }} />;
-  return <section className="card wide">
+  return <section className="card wide"><BusyOverlay visible={busy} />
+    {loadingDevices && <p role="status"><span className="spinner" aria-hidden="true" /> Finding your TVs…</p>}
     <div className="card-top"><h2>{settings ? 'Paired TVs' : 'Your TVs'}</h2>
       <button className="link inline" onClick={() => setSettings(!settings)}>{settings ? 'Done' : 'Settings'}</button></div>
     {settings ? devices.map(device => <DeviceEditor key={device.deviceId} device={device} api={api} changed={load} />) :
-      <>{emptyDeviceMessage(devices) && <div className="empty"><strong>No TV detected</strong><p>Open HomePing on your TV and authorize it with this account.</p><button className="secondary" onClick={() => setActivate(true)}>Enter TV code</button></div>}
+      <>{!loadingDevices && emptyDeviceMessage(devices) && <div className="empty"><strong>No TV detected</strong><p>Open HomePing on your TV and authorize it with this account.</p><button className="secondary" onClick={() => setActivate(true)}>Enter TV code</button></div>}
       {devices.map(device => <div className="device-row" key={device.deviceId}>
         <h3>{device.name}</h3><p className="muted">{device.manufacturer} {device.model}{device.room ? ` · ${device.room}` : ''}<br />{lastSeenLabel(device.lastSeen, clock)}</p>
         <button className="primary" disabled={busy || (!!call && !isTerminal(call.status))} onClick={() => run(async () => setCall(await api.call(device.deviceId)))}>Call</button>
@@ -153,10 +160,10 @@ function App() {
   }, []);
   const api = useMemo(() => user ? new Api(backendUrl, force => user.getIdToken(!!force)) : null, [user]);
   const activationCode = new URLSearchParams(location.search).get('activate') ?? '';
-  return <main><header><a className="brand" href="/"><span className="brand-icon">▣</span> HomePing</a>
+  return <main><header><a className="brand" href="/"><img className="brand-mark" src="/homeping-icon.svg" alt="" width="36" height="36" /> HomePing</a>
     {user && <button className="link inline" onClick={() => signOut(getAuth())}>Sign out</button>}</header>
     <section className="intro"><p className="eyebrow">A LITTLE CLOSER TO HOME</p><h1>Your living room.<br/><em>One call away.</em></h1></section>
-    {!loaded || !config ? <section className="card">Opening HomePing… The server may take a minute to wake up.</section> :
+    {!loaded || !config ? <section className="card"><span className="spinner" aria-hidden="true" /> Opening HomePing… The server may take a minute to wake up.</section> :
       !user ? <AuthScreen config={config} onError={setError} /> :
       !user.emailVerified ? <Verification user={user} onError={setError} /> :
       <Caller api={api!} activationCode={activationCode} />}

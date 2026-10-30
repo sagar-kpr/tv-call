@@ -36,7 +36,7 @@ try {
   await service.action(tv, call.id, 'accept');
   await build({ entryPoints: [resolve('scripts/fixtures/media-web.tsx')], bundle: true,
     outfile: join(directory, 'app.js'), platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
-  await writeFile(join(directory, 'index.html'), '<!doctype html><div id="root"></div><script src="/app.js"></script>');
+  await writeFile(join(directory, 'index.html'), '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"><div id="root"></div><script src="/app.js"></script>');
   const app = appFor(service, async token => {
     if (token === 'caller') return owner;
     if (token === 'tv') return tv;
@@ -51,7 +51,8 @@ try {
   const callerPage = await browser.newPage(), tvPage = await browser.newPage();
   for (const [page, role] of [[callerPage, 'caller'], [tvPage, 'tv']] as const) {
     await page.goto(`${origin}/?id=${call.id}&role=${role}`);
-    await page.getByRole('button', { name: 'Join video call', exact: true }).click();
+    // Acceptance opens media automatically; no second Join action is sent.
+    await page.getByRole('button', { name: 'Mute', exact: true }).waitFor({ timeout: 45_000 });
   }
   const frames = async (page: Page) => {
     await page.waitForFunction(() => {
@@ -64,6 +65,21 @@ try {
     }, undefined, { timeout: 15_000 });
   };
   await Promise.all([frames(callerPage), frames(tvPage)]);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await callerPage.setViewportSize(viewport);
+    const sizes = await callerPage.evaluate(() => {
+      const call = document.querySelector('.video-call')!.getBoundingClientRect();
+      const stage = document.querySelector('.video-stage')!.getBoundingClientRect();
+      const controls = document.querySelector('.call-controls')!.getBoundingClientRect();
+      return { width: call.width, height: call.height, stageWidth: stage.width, stageHeight: stage.height,
+        controlsBottom: controls.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight };
+    });
+    assert.equal(sizes.width, sizes.viewportWidth);
+    assert.equal(sizes.height, sizes.viewportHeight);
+    assert.ok(sizes.stageWidth >= sizes.viewportWidth * .98);
+    assert.ok(sizes.stageHeight > sizes.viewportHeight * .6, `Remote video must own most of the screen: ${JSON.stringify(sizes)}`);
+    assert.ok(sizes.controlsBottom <= sizes.viewportHeight + 1, 'Controls must remain visible');
+  }
   await callerPage.getByRole('button', { name: 'Mute', exact: true }).click();
   await callerPage.getByRole('button', { name: 'Enable microphone', exact: true }).waitFor();
   await callerPage.getByRole('button', { name: 'Enable microphone', exact: true }).click();
@@ -73,7 +89,7 @@ try {
   await callerPage.getByRole('button', { name: 'End call', exact: true }).click();
   await tvPage.getByText('Call ended', { exact: true }).waitFor({ timeout: 15_000 });
   assert.equal((await service.get(owner, call.id)).status, 'ended');
-  console.log('PASS: real LiveKit room; both browsers receive video frames and audio; mute/camera toggles; End propagates. TV hardware is not tested.');
+  console.log('PASS: real LiveKit room; both browsers receive video frames and audio; full-screen desktop/phone layouts; mute/camera toggles; End propagates. TV hardware is not tested.');
 } finally {
   await browser?.close();
   if (callId) await media.close(callId).catch(() => {});

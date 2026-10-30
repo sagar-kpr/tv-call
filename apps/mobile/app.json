@@ -20,6 +20,7 @@
     "plugins": [
       "expo-web-browser",
       "./plugins/withHomePingTv.cjs"
-    ]
+    ],
+    "icon": "./assets/homeping-icon.png"
   }
 }

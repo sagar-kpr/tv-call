@@ -99,3 +99,13 @@ export function lastSeenLabel(lastSeen: number, now = Date.now()) {
   if (minutes === 1) return 'last seen 1 minute ago';
   return `last seen ${minutes} minutes ago`;
 }
+
+/** One automatic launch per accepted call, deferred while the caller is backgrounded. */
+export class AutoJoinGate {
+  private launched = new Set<string>();
+  claim(id: string, status: string, foreground: boolean): boolean {
+    if (!foreground || status !== 'accepted' || this.launched.has(id)) return false;
+    this.launched.add(id); return true;
+  }
+  retry(id: string): void { this.launched.delete(id); }
+}

@@ -16,6 +16,7 @@ class ModeActivity : Activity() {
         layout.addView(auto)
         layout.addView(Ui.button(this, "Run as TV") { choose("tv") })
         layout.addView(Ui.button(this, "Run as phone") { choose("phone") })
+        if (Backend.isTvMode(this) && Backend.authorized(this)) layout.addView(Ui.button(this, "Advanced TV preferences") { startActivity(Intent(this, SetupActivity::class.java).putExtra("advanced", true)) })
         layout.addView(Ui.button(this, "Back") { finish() })
         setContentView(layout)
         auto.requestFocus()

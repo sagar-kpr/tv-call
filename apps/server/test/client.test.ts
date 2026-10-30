@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Api, emptyDeviceMessage, lastSeenLabel } from '../../../packages/client/src/index.js';
+import { Api, AutoJoinGate, emptyDeviceMessage, lastSeenLabel } from '../../../packages/client/src/index.js';
 
 test('client uses supplied Firebase tokens and retries once after 401', async () => {
   const original = globalThis.fetch;
@@ -46,4 +46,17 @@ test('startup handles a sleeping-server HTML response without a JSON parsing err
   globalThis.fetch = async () => new Response('<html>Starting service</html>', { status: 503 });
   try { await assert.rejects(Api.config('https://example.test'), /HomePing is starting or temporarily unavailable/); }
   finally { globalThis.fetch = original; }
+});
+
+
+test('automatic joining waits for acceptance and foreground, and launches each call once', () => {
+  const gate = new AutoJoinGate();
+  assert.equal(gate.claim('one', 'ringing', true), false);
+  assert.equal(gate.claim('one', 'accepted', false), false);
+  assert.equal(gate.claim('one', 'accepted', true), true);
+  assert.equal(gate.claim('one', 'accepted', true), false);
+  assert.equal(gate.claim('one', 'cancelled', true), false);
+  assert.equal(gate.claim('two', 'accepted', true), true);
+  gate.retry('one');
+  assert.equal(gate.claim('one', 'accepted', true), true);
 });

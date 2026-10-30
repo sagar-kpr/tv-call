@@ -13,6 +13,8 @@ module.exports = function withHomePingTv(config) {
     application.$['android:allowBackup'] = 'false';
     application.$['android:usesCleartextTraffic'] = 'false';
     application.$['android:banner'] = '@drawable/homeping_tv_banner';
+    application.$['android:icon'] = '@drawable/homeping_icon';
+    application.$['android:roundIcon'] = '@drawable/homeping_icon';
     application['meta-data'] = (application['meta-data'] ?? [])
       .filter(item => item.$['android:name'] !== 'dev.homeping.BACKEND_URL');
     application['meta-data'].push({ $: {
@@ -56,7 +58,8 @@ module.exports = function withHomePingTv(config) {
     };
     add('activity', {
       $: { 'android:name': 'dev.tvcall.caller.HomePingLauncherActivity', 'android:exported': 'true',
-        'android:theme': '@android:style/Theme.Material.NoActionBar', 'android:excludeFromRecents': 'true' },
+        'android:theme': '@android:style/Theme.Material.NoActionBar', 'android:excludeFromRecents': 'true',
+        'android:icon': '@drawable/homeping_icon', 'android:banner': '@drawable/homeping_tv_banner', 'android:label': 'HomePing' },
       'intent-filter': [{
         action: [{ $: { 'android:name': 'android.intent.action.MAIN' } }],
         category: [...launcherCategories].map(name => ({ $: { 'android:name': name } })),
@@ -118,8 +121,12 @@ dependencies {
   return withDangerousMod(config, ['android', async (config) => {
     const target = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/drawable');
     await fs.mkdir(target, { recursive: true });
-    await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/drawable/banner.xml'),
-      path.join(target, 'homeping_tv_banner.xml'));
+    await fs.rm(path.join(target, 'homeping_tv_banner.xml'), { force: true });
+    for (const [folder, filename] of [['drawable-nodpi', 'homeping_icon.png'], ['drawable-xhdpi', 'homeping_tv_banner.png'], ['drawable-xxxhdpi', 'homeping_tv_banner.png']]) {
+      const destination = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res', folder);
+      await fs.mkdir(destination, { recursive: true });
+      await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res', folder, filename), path.join(destination, filename));
+    }
     const raw = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/raw');
     await fs.mkdir(raw, { recursive: true });
     await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/raw/homeping_ring.wav'),

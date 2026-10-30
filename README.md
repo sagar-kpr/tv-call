@@ -187,8 +187,8 @@ The caller lists all TVs under the signed-in account with brand/model and
 last-seen time. It does not claim a TV is online. Calls can become Ringing,
 Accepted, Declined, Missed, Busy, Cancelled, Ended, or Failed. DND immediately
 returns Declined without sending FCM. One ringing/accepted call is allowed per
-TV and ringing expires after 30 seconds. After acceptance select Join video call
-on the caller and allow camera/mic permissions. The TV joins directly after
+TV and ringing expires after 30 seconds. After acceptance the caller joins automatically. Allow camera/mic permissions
+when requested. The TV joins directly after
 acceptance. Both sides have mute/camera/End controls, and Android also has camera
 switching. Missing or denied inputs are displayed. End on TV returns Home; End
 on the phone returns to its caller screen. Leaving the native call screen ends
@@ -198,7 +198,8 @@ Start with the experimental overlay off. Android first receives a high-priority
 FCM message and posts a high-importance call notification with Accept/Reject
 actions and a full-screen intent. If the firmware does not present it, enable
 the overlay and grant its one-time permission. The overlay switch being ON is
-not sufficient: check that TV setup reports **permission granted**. If this TV
+not sufficient: grant the permission in system settings. The home screen
+shows **Enable call pop-ups** until permission is granted. If this TV
 has no overlay permission settings screen, one-time authorized ADB setup is:
 
 ```sh
@@ -207,17 +208,35 @@ adb shell appops set dev.tvcall.caller SYSTEM_ALERT_WINDOW allow
 
 Disconnect ADB after setup and test a call over Home. With HomePing's TV setup
 screen already in front, a validated ringing call opens Accept/Reject directly;
-Recover active call remains a manual fallback. Incoming ringtone is ON by default:
+There is no manual recovery step in normal use. Incoming ringtone is ON by default:
 a bundled melodic marimba/chime ringtone repeats through the TV's media-volume output while the validated
 invitation rings, then stops on acceptance/rejection/cancellation/expiry. TV
 settings include an ON/OFF switch and a eight-second Test ringtone button. **Reliable mode is off by
 default**; when enabled it schedules a periodic token/registration refresh. It
 does not bypass Android force-stop or manufacturer background restrictions.
 
-The TV debug section keeps the last 20 lifecycle, FCM, notification, overlay,
-registration, and call events locally without storing tokens. Use it together
-with observation on the real TV; a logged notification is not proof that a
-visible, remote-operable prompt appeared.
+The TV home screen contains its name, room, and TV settings. Only name and room
+are editable; About this TV displays detected details. Incoming calls use a centered
+HomePing card with remote focus. Technical controls are hidden: long-press HomePing,
+then choose Advanced TV preferences for Reliable mode and audio compatibility.
+The last 20 diagnostic events remain stored internally without a visible log panel.
+Use filtered ADB logs during diagnostic runs; a logged notification is not proof
+of a visible, remote-operable prompt.
+
+Small loading cards indicate sign-in, TV authorization, saving, and caller actions.
+TV-list loading and media connection use inline spinners. Loading ends on completion
+or failure; routine status polling does not show a blocking popup. The phone opens
+each accepted call once while foregrounded; Retry connection appears after a launch
+failure. Browser calls also connect automatically after acceptance.
 
 See [API documentation](docs/API.md) and the
 [hardware verification procedure](docs/HARDWARE_TEST.md).
+
+HomePing uses the same house icon for the TV/phone launcher, caller headers, and
+website favicon. Source SVG artwork is in `apps/tv/artwork`; regenerate shared
+PNG/SVG assets with `node scripts/generate-tv-branding.mjs` (requires Chrome).
+
+After acceptance, web calls fill the browser window rather than the TV-list card.
+The Android caller retains its previous call layout with a small self-preview
+and a separate controls row. Video preserves its aspect ratio, so
+black bars can appear when camera and display proportions differ.

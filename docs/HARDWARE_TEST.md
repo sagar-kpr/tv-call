@@ -35,7 +35,7 @@ Status: **NOT VERIFIED ON HARDWARE**. No claim of notification visibility, remot
 9. Trigger simultaneous calls from web/Android: exactly one rings; the other reports Busy. Enable Do Not Disturb and confirm the caller immediately reports Declined with no TV prompt. Duplicate a push in a controlled test: one invitation, one expiry, no duplicate acceptance. Refresh the FCM token and confirm registration retries and new invitations.
 10. Restart the backend while ringing. Reconnect before expiry to verify the persisted call; after expiry, verify acceptance fails. Test dropped cancellation push with server polling still available.
 
-Collect logs in a **separate diagnostic run** with `adb logcat -s HomePing` and copy the TV's last-20-events debug screen; routine latency/reliability runs must also work disconnected from ADB. Logs include shortened call IDs, FCM receipt, notification posting, overlay display, registration, and call actions without FCM tokens. Record visual appearance time by observation/video; notification posting is not proof of screen visibility.
+Collect logs in a **separate diagnostic run** with `adb logcat -s HomePing` (the TV stores 20 internal events; the normal UI has no log panel); routine latency/reliability runs must also work disconnected from ADB. Logs include shortened call IDs, FCM receipt, notification posting, overlay display, registration, and call actions without FCM tokens. Record visual appearance time by observation/video; notification posting is not proof of screen visibility.
 
 ## Account and removal checks
 
@@ -81,7 +81,7 @@ capture. Native camera/audio, USB compatibility and TV presentation remain
 **NOT VERIFIED ON HARDWARE**. Configure [LiveKit](LIVEKIT.md) before this test.
 
 1. Install the new single APK on both devices and deploy the new API and web
-   assets. Accept a call on TV; select Join video call on the phone/web. Verify
+   assets. Accept a call on TV; confirm the phone/web joins automatically without another tap. Verify
    camera and microphone runtime prompts with the remote, including clear focus.
 2. Test grant, deny, and permanently deny for each permission. Missing inputs
    must produce a visible message; remote playback and remaining inputs should
@@ -223,3 +223,63 @@ expired/already cancelled invitations, the disabled setting and closure before
 late validation. The single APK builds with 22 passing native tests. The bundled
 PCM waveform and its packaged resource were checked; audible TV playback still
 requires listening on the device.
+
+
+### TV UI and loading update — 2026-10-31
+
+The source now uses a HomePing launcher icon and wordmark banner, simplified TV
+home/settings, and a centered Accept/Reject card shared by the overlay and incoming
+activity. Logs, recovery buttons, and audio diagnostics are removed from normal TV
+screens. Advanced preferences are accessible by long-pressing HomePing, then choosing
+Advanced TV preferences. Phone layout is retained with small loading cards.
+
+Verify on hardware: launcher artwork after an APK update (the launcher may cache
+artwork), all settings with D-pad/Back, visible Accept/Reject focus and OK actions,
+loading cards disappearing on success/failure, and TV call connection spinner.
+On the updated phone APK, accept on TV and confirm camera/mic open automatically;
+repeated status updates and returning from End must not reopen the call. Accepting
+while the phone is backgrounded must wait until it returns to the foreground.
+Repeat cancellation/expiry and disconnected-ADB tests. Browser media integration
+covers automatic connection but does not verify Android or TV hardware.
+
+Local verification for this update: release APK build and 22 Android unit tests
+passed; TypeScript checks and backend/client tests passed (28 passed, two emulator
+checks skipped because backend/rules were unchanged). Browser smoke testing confirms
+the loading card clears on both successful and failed call requests. The live
+LiveKit browser test received video frames and audio in both directions after
+automatic connection, and checked mute/camera controls and End propagation.
+Firebase Hosting was updated. The APK was installed over the existing TV app,
+preserving authorization and permissions. TV UI inspection observed the registration
+loading card and the new settings form with field focus. Screenshots on this firmware
+are unreliable; full visual/D-pad acceptance, updated phone auto-join, and the incoming
+card's revised appearance still require a user call test. No new TV microphone
+compatibility result is claimed.
+
+Final installed-build check: TV registration loader cleared to HomePing home;
+no Debug/Recover controls appeared in the main hierarchy. Remote OK opened TV
+settings; Save changes and About this TV were visible without scrolling at this
+TV's current display scale. Back and Home returned to the launcher. Shared icon
+PNG checksums match across TV, phone, and website assets; the deployed website
+serves the matching SVG. This does not replace the incoming-call hardware tests.
+
+
+### Larger caller video — 2026-10-31
+
+Accepted browser calls now render in a viewport-sized portal, outside the narrow
+account card. The native Android caller places remote video across the call surface,
+with a corner self-preview and controls overlaid at the bottom; audio diagnostics
+are available by long-pressing the status text. The TV call layout is preserved.
+
+Verification: TypeScript and web build passed; live LiveKit integration verified
+full-window bounds at 1280×900, 390×844, and 844×390, remote-video stage occupying
+most of each viewport, controls staying visible, real media, and mute/camera/End.
+APK release build and Android unit tests passed. Install the updated phone APK and
+verify the remote video size, local preview, permission dialogs, and all call controls
+on a real phone; native call appearance has not been verified by a phone hardware call.
+
+
+Phone layout rollback: the user reported a white screen after acceptance and asked
+to revert the recent phone layout changes before phone logs could be collected.
+Restored the previous native phone layout (video above the separate controls row
+and audio information). Automatic joining, branding, loaders, and the larger web
+view are preserved. The cause of the phone white screen is not yet verified.

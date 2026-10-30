@@ -48,6 +48,7 @@ class CallActivity : Activity() {
     private var localAudio: LocalAudioTrack? = null
     private var remoteAudio: RemoteAudioTrack? = null
     private lateinit var audioStatus: TextView
+    private lateinit var connectionLoader: android.widget.ProgressBar
     private var tvCompatibility = false
     private var room: Room? = null
     private var localTrack: VideoTrack? = null
@@ -67,11 +68,13 @@ class CallActivity : Activity() {
         api = CallApi(this, intent.getStringExtra("callerToken"), intent.getStringExtra("callerRefresh"), intent.getStringExtra("apiKey"))
         for (key in listOf("callerToken", "callerRefresh", "apiKey")) intent.removeExtra(key)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_SECURE)
-        val layout = Ui.column(this).apply { setPadding(24, 12, 24, 12) }
-        status = Ui.text(this, "Connecting your call…", 18f); layout.addView(status)
+        val layout = (if (api.caller) Ui.column(this) else TvUi.screen(this)).apply { setPadding(24, 12, 24, 12) }
+        status = if (api.caller) Ui.text(this, "Connecting your call…", 18f) else TvUi.text(this, "Connecting your call…", 18f); layout.addView(status)
+        connectionLoader = android.widget.ProgressBar(this).apply { indeterminateTintList = android.content.res.ColorStateList.valueOf(if (api.caller) android.graphics.Color.rgb(36, 78, 58) else TvUi.accent) }
+        layout.addView(connectionLoader, LinearLayout.LayoutParams(TvUi.dp(this, 24), TvUi.dp(this, 24)))
         tvCompatibility = !api.caller && Backend.tvAudioCompatibility(this)
         volumeControlStream = if (tvCompatibility) AudioManager.STREAM_MUSIC else AudioManager.STREAM_VOICE_CALL
-        audioStatus = Ui.text(this, "Audio: waiting for connection", 14f); layout.addView(audioStatus)
+        audioStatus = Ui.text(this, "Audio: waiting for connection", 14f); if (api.caller) layout.addView(audioStatus)
         val stage = android.widget.FrameLayout(this)
         remote = SurfaceViewRenderer(this).apply { contentDescription = "Remote video"; isFocusable = false }
         local = SurfaceViewRenderer(this).apply { contentDescription = "Your camera"; isFocusable = false; setZOrderMediaOverlay(true) }
@@ -79,12 +82,14 @@ class CallActivity : Activity() {
         stage.addView(local, android.widget.FrameLayout.LayoutParams(240, 135, android.view.Gravity.BOTTOM or android.view.Gravity.END))
         layout.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
         val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        mic = Ui.button(this, "Enable mic") { toggle(false) }
-        camera = Ui.button(this, "Enable camera") { toggle(true) }
-        switch = Ui.button(this, "Switch camera") { (localTrack as? LocalVideoTrack)?.switchCamera() }
-        end = Ui.button(this, "End call") { endCall(true) }
+        fun control(label: String, click: () -> Unit): Button = if (api.caller) Ui.button(this, label, click) else TvUi.button(this, label, click = click)
+        mic = control( "Enable mic") { toggle(false) }
+        camera = control( "Enable camera") { toggle(true) }
+        switch = control( "Switch camera") { (localTrack as? LocalVideoTrack)?.switchCamera() }
+        end = control( "End call") { endCall(true) }
         val audio = Ui.button(this, "Audio info") { showAudioInfo() }
-        for (button in listOf(mic, camera, switch, audio, end)) controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
+        for (button in if (api.caller) listOf(mic, camera, switch, audio, end) else listOf(mic, camera, switch, end))
+            controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
         layout.addView(controls); setContentView(layout); end.requestFocus(); controlsEnabled(false)
         scope.launch {
             try {
@@ -96,7 +101,7 @@ class CallActivity : Activity() {
                 val permissions = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
                     .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
                 if (permissions.isEmpty()) connect() else requestPermissions(permissions.toTypedArray(), 201)
-            } catch (error: Exception) { if (error is CancellationException) throw error; status.text = error.message ?: "Could not start call" }
+            } catch (error: Exception) { if (error is CancellationException) throw error; connectionLoader.visibility = android.view.View.GONE; status.text = error.message ?: "Could not start call" }
         }
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -140,7 +145,7 @@ class CallActivity : Activity() {
                     }
                 } }
                 withTimeout(35_000) { active.connect(credentials.getString("url"), credentials.getString("token")) }
-                connected = true; controlsEnabled(true)
+                connected = true; connectionLoader.visibility = android.view.View.GONE; controlsEnabled(true)
                 val notices = mutableListOf<String>()
                 if (hasPermission(Manifest.permission.RECORD_AUDIO)) {
                     try { micOn = active.localParticipant.setMicrophoneEnabled(true); if (!micOn) notices.add("Microphone unavailable") }
@@ -165,7 +170,7 @@ class CallActivity : Activity() {
                 DebugEvents.add(this@CallActivity, "Media connected; camera=$cameraOn microphone=$micOn")
             } catch (error: Exception) {
                 if (error is CancellationException && error !is TimeoutCancellationException) throw error
-                connected = false; controlsEnabled(false); releaseMedia()
+                connected = false; connectionLoader.visibility = android.view.View.GONE; controlsEnabled(false); releaseMedia()
                 status.text = "Could not connect video: ${error.message ?: "connection failed"}. End this call and try again."
                 DebugEvents.add(this@CallActivity, "Media connection failed")
             }

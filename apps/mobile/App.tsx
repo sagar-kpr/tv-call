@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  SafeAreaView, ScrollView, Text, TextInput, Pressable, StyleSheet, View, Alert, NativeModules,
+  SafeAreaView, ScrollView, Text, TextInput, Pressable, StyleSheet, View, Alert, NativeModules, ActivityIndicator, Modal, AppState, Image,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp, getApps } from 'firebase/app';
@@ -12,7 +12,7 @@ import {
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import {
-  Api, emptyDeviceMessage, isTerminal, lastSeenLabel,
+  Api, AutoJoinGate, emptyDeviceMessage, isTerminal, lastSeenLabel,
   type Call, type PublicConfig, type TvDevice,
 } from '@homeping/client';
 WebBrowser.maybeCompleteAuthSession();
@@ -32,6 +32,14 @@ function Button({ title, onPress, disabled = false, danger = false }: {
   </Pressable>;
 }
 
+function BusyOverlay({ visible, label }: { visible: boolean; label: string }) {
+  return <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
+    <View style={styles.busyBackdrop}><View accessibilityRole="progressbar" accessibilityLabel={label} style={styles.busyCard}>
+      <ActivityIndicator color="#244e3a" size="small" /><Text style={styles.busyLabel}>{label}</Text>
+    </View></View>
+  </Modal>;
+}
+
 function Login({ auth, config, setError }: { auth: Auth; config: PublicConfig; setError: (v: string) => void }) {
   const [email, setEmail] = useState(''), [password, setPassword] = useState('');
   const [mode, setMode] = useState<'signin'|'signup'|'forgot'>('signin'), [busy, setBusy] = useState(false);
@@ -40,6 +48,7 @@ function Login({ auth, config, setError }: { auth: Auth; config: PublicConfig; s
     try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <View style={styles.card}>
+    <BusyOverlay visible={busy} label={mode === 'forgot' ? 'Sending reset email…' : mode === 'signup' ? 'Creating your account…' : 'Signing in…'} />
     <Text style={styles.heading}>{mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Reset password' : 'Sign in'}</Text>
     <Text style={styles.muted}>Use the same verified HomePing account as your TV.</Text>
     <TextInput accessibilityLabel="Email" style={styles.input} placeholder="Email" value={email} onChangeText={setEmail}
@@ -80,14 +89,20 @@ function GoogleLogin({ auth, config, busy, run }: {
 }
 
 function Verification({ user, setError, onVerified }: { user: User; setError: (v: string) => void; onVerified: () => void }) {
-  return <View style={styles.card}><Text style={styles.heading}>Verify your email</Text>
+  const [busy, setBusy] = useState(false);
+  async function run(action: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await action(); } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
+  }
+  return <View style={styles.card}><BusyOverlay visible={busy} label="Checking your account…" /><Text style={styles.heading}>Verify your email</Text>
     <Text style={styles.muted}>Open the verification link sent to {user.email}, then continue.</Text>
-    <Button title="I verified my email" onPress={() => void reload(user).then(async () => {
+    <Button disabled={busy} title="I verified my email" onPress={() => void run(async () => {
+      await reload(user);
       if (!user.emailVerified) throw new Error('Email is not verified yet.');
-      await user.getIdToken(true);
-      onVerified();
-    }).catch(e => setError(e.message))} />
-    <Button title="Resend verification email" onPress={() => void sendEmailVerification(user).catch(e => setError(e.message))} />
+      await user.getIdToken(true); onVerified();
+    })} />
+    <Button disabled={busy} title="Resend verification email" onPress={() => void run(() => sendEmailVerification(user))} />
     <Pressable onPress={() => void signOut(getAuth())}><Text style={styles.link}>Use another account</Text></Pressable>
   </View>;
 }
@@ -95,8 +110,31 @@ function Verification({ user, setError, onVerified }: { user: User; setError: (v
 function Caller({ api, backend, user, setError }: { api: Api; backend: string; user: User; setError: (v: string) => void }) {
   const [devices, setDevices] = useState<TvDevice[]>([]), [call, setCall] = useState<Call | null>(null);
   const [busy, setBusy] = useState(false), [settings, setSettings] = useState(false), [clock, setClock] = useState(Date.now());
+  const [loadingDevices, setLoadingDevices] = useState(true), [joinError, setJoinError] = useState(false);
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const gate = useRef(new AutoJoinGate());
   const load = async () => setDevices(await api.devices());
-  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)); }, []);
+  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)).finally(() => setLoadingDevices(false)); }, []);
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => setForeground(state === 'active'));
+    return () => listener.remove();
+  }, []);
+  useEffect(() => {
+    if (!call || !gate.current.claim(call.id, call.status, foreground)) return;
+    let disposed = false;
+    setJoinError(false);
+    void (async () => {
+      try {
+        if (!NativeModules.HomePingMode?.startCall) throw new Error('Install the updated HomePing APK to use video calls.');
+        const token = await user.getIdToken();
+        if (disposed || AppState.currentState !== 'active') { gate.current.retry(call.id); return; }
+        await NativeModules.HomePingMode.startCall(call.id, token, user.refreshToken, getAuth().app.options.apiKey);
+      } catch (error) {
+        if (!disposed) { setJoinError(true); setError((error as Error).message); }
+      }
+    })();
+    return () => { disposed = true; };
+  }, [call?.id, call?.status, foreground, user]);
   useEffect(() => {
     if (!call || isTerminal(call.status)) return;
     const timer = setInterval(() => {
@@ -109,12 +147,14 @@ function Caller({ api, backend, user, setError }: { api: Api; backend: string; u
     setBusy(true); setError(''); try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <View style={styles.card}>
+    <BusyOverlay visible={busy} label="Please wait…" />
+    {loadingDevices && <View style={styles.loadingRow}><ActivityIndicator color="#244e3a" /><Text style={styles.muted}>Finding your TVs…</Text></View>}
     <View style={styles.row}><Text style={styles.heading}>{settings ? 'Paired TVs' : 'Your TVs'}</Text>
       <Pressable onPress={() => setSettings(!settings)}><Text style={styles.link}>{settings ? 'Done' : 'Settings'}</Text></Pressable></View>
     <Pressable disabled={busy} onPress={() => void run(load)}>
       <Text style={styles.link}>Refresh TVs</Text>
     </Pressable>
-    {emptyDeviceMessage(devices) && <View style={styles.device}><Text style={styles.deviceTitle}>No TV detected</Text>
+    {!loadingDevices && emptyDeviceMessage(devices) && <View style={styles.device}><Text style={styles.deviceTitle}>No TV detected</Text>
       <Text style={styles.muted}>Open HomePing on your TV. Scan its QR code or open the backend URL in a browser to approve it.</Text>
       <Button title="Open TV approval website" onPress={() => void WebBrowser.openBrowserAsync(backend)} /></View>}
     {devices.map(device => <View style={styles.device} key={device.deviceId}>
@@ -131,10 +171,9 @@ function Caller({ api, backend, user, setError }: { api: Api; backend: string; u
     } as Record<string,string>)[call.status]}</Text>
       {call.status === 'ringing' && <><Text style={styles.muted}>{call.receivedAt ? 'TV received the invitation' : 'Waiting for TV'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</Text>
         <Button title="Cancel" disabled={busy} onPress={() => void run(async () => setCall(await api.cancel(call.id)))} /></>}
-      {call.status === 'accepted' && <><Button title="Join video call" disabled={busy} onPress={() => void run(async () => {
-        if (!NativeModules.HomePingMode?.startCall) throw new Error('Install the updated HomePing APK to use video calls.');
-        await NativeModules.HomePingMode.startCall(call.id, await user.getIdToken(), user.refreshToken, getAuth().app.options.apiKey);
-      })} />
+      {call.status === 'accepted' && <>
+      {!joinError ? <View style={styles.loadingRow}><ActivityIndicator color="#244e3a" /><Text style={styles.muted}>Opening your call…</Text></View> :
+        <Button title="Retry connection" onPress={() => { gate.current.retry(call.id); setForeground(false); setTimeout(() => setForeground(AppState.currentState === 'active'), 0); }} />}
       <Button danger title="End call" disabled={busy} onPress={() => void run(async () => setCall(await api.end(call.id)))} /></>}
     </View>}
     <Pressable onPress={() => void signOut(getAuth())}><Text style={styles.link}>Sign out {user.email}</Text></Pressable>
@@ -164,11 +203,12 @@ export default function App() {
   const api = useMemo(() => user ? new Api(backend, force => user.getIdToken(!!force)) : null, [backend, user]);
   return <SafeAreaView style={styles.root}><ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
     <Pressable accessibilityLabel="HomePing. Long press for device mode settings."
-      onLongPress={() => NativeModules.HomePingMode?.openSettings()}>
-      <Text style={styles.brand}>▣ HomePing</Text>
+      style={styles.brandRow} onLongPress={() => NativeModules.HomePingMode?.openSettings()}>
+      <Image source={require('./assets/homeping-icon.png')} style={{ width: 36, height: 36, borderRadius: 10 }} />
+      <Text style={styles.brand}>HomePing</Text>
     </Pressable><Text style={styles.eyebrow}>A LITTLE CLOSER TO HOME</Text>
     <Text style={styles.title}>Your living room.{ '\n' }One call away.</Text>
-    {!config || !auth ? <View style={styles.card}><Text style={styles.heading}>{busy ? 'Opening HomePing…' : 'HomePing unavailable'}</Text>
+    {!config || !auth ? <View style={styles.card}>{busy && <ActivityIndicator color="#244e3a" style={{ marginBottom: 14 }} />}<Text style={styles.heading}>{busy ? 'Opening HomePing…' : 'HomePing unavailable'}</Text>
       <Text style={styles.muted}>{busy ? 'The server may take a minute to wake up.' : 'Please check your connection and try again.'}</Text>
       {!busy && <Button title="Try again" onPress={() => void connect()} />}</View> :
       !loaded ? <Text>Loading…</Text> : !user ? <Login auth={auth} config={config} setError={setError} /> :
@@ -179,8 +219,13 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  busyBackdrop: { flex: 1, backgroundColor: 'rgba(12,30,22,.28)', alignItems: 'center', justifyContent: 'center' },
+  busyCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 20, padding: 24, maxWidth: '85%', elevation: 12 },
+  busyLabel: { color: '#18352d', fontSize: 16, marginLeft: 16 },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   root: { flex: 1, backgroundColor: '#f6f5ef' }, page: { padding: 24, paddingBottom: 60 },
-  brand: { color: '#18352d', fontSize: 24, fontWeight: '800', marginBottom: 48 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 48 },
+  brand: { color: '#18352d', fontSize: 24, fontWeight: '800' },
   eyebrow: { color: '#5b7563', letterSpacing: 2, fontSize: 11, textAlign: 'center' },
   title: { color: '#18352d', fontSize: 39, lineHeight: 46, fontWeight: '700', textAlign: 'center', marginVertical: 18 },
   card: { backgroundColor: 'white', borderColor: '#e1e6db', borderWidth: 1, borderRadius: 22, padding: 22, marginTop: 26 },

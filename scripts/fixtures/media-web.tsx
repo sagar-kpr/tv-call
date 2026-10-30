@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Api, type Call } from '../../packages/client/src/index';
+import '../../apps/web/src/style.css';
 import { VideoCall } from '../../apps/web/src/VideoCall';
 const params = new URLSearchParams(location.search);
 const api = new Api(location.origin, async () => params.get('role')!);

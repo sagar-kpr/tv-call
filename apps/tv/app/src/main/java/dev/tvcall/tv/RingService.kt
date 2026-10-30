@@ -87,21 +87,20 @@ class RingService : Service() {
     }
     private fun showOverlay() {
         if (System.currentTimeMillis() >= deadline) { close(); return }
-        val column = Ui.column(this)
-        column.addView(Ui.text(this, "Incoming TV call", 32f))
-        column.addView(Ui.text(this, "Use ← / → or ↑ / ↓ and OK to choose.", 18f))
-        val accept = Ui.button(this, "Accept") {
+        val prompt = TvUi.incoming(this, accept = {
+            if (System.currentTimeMillis() >= deadline) { close(); return@incoming }
             try { startActivity(Alerts.activity(this, CallActivity::class.java, callId, "accept")) }
             catch (e: Exception) { Log.e("HomePing", "Overlay activity launch blocked", e) }
             close()
-        }
-        column.addView(accept)
-        column.addView(Ui.button(this, "Reject") {
+        }, reject = {
             val id = callId
-            Backend.io.execute { try { Backend.action(this, id, "decline"); DebugEvents.add(this, "Call ${id.take(8)} declined") } catch (e: Exception) { Log.w("HomePing", "Decline failed", e) } }
+            Backend.io.execute { try { Backend.action(this, id, "decline") } catch (e: Exception) { Log.w("HomePing", "Decline failed", e) } }
             close()
         })
-        val params = WindowManager.LayoutParams(700, WindowManager.LayoutParams.WRAP_CONTENT,
+        val column = prompt.panel
+        val accept = prompt.accept
+        val width = minOf(TvUi.dp(this, 560), (resources.displayMetrics.widthPixels * .85f).toInt())
+        val params = WindowManager.LayoutParams(width, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER }
         try {
             getSystemService(WindowManager::class.java).addView(column, params); overlay = column; accept.requestFocus()

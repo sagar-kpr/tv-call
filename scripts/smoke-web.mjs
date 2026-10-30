@@ -32,6 +32,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1050 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   let call = null;
+  let failNextCall = false;
   await page.route('https://identitytoolkit.googleapis.com/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path.includes('signInWithPassword')) return route.fulfill({ json: {
@@ -44,7 +45,7 @@ try {
     }] }});
     return route.fulfill({ status: 400, json: { error: { message: 'UNEXPECTED_AUTH_REQUEST' } } });
   });
-  await page.route('**/api/**', route => {
+  await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/config') return route.fulfill({ json: {
       apiKey: 'test', projectId: 'test', androidAppId: 'test-app',
@@ -61,6 +62,8 @@ try {
       lastSeen: Date.now(), createdAt: Date.now(), updatedAt: Date.now(),
     }] });
     if (path.endsWith('/calls') && route.request().method() === 'POST') {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (failNextCall) return route.fulfill({ status: 503, json: { error: 'Temporarily unavailable' } });
       call = {
         id: 'call-1', deviceId: '11111111-1111-4111-8111-111111111111',
         ownerUid: 'owner', callerUid: 'owner', status: 'ringing',
@@ -81,13 +84,20 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByText('Living room', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Call', exact: true }).click();
+  await page.getByText('Please wait…', { exact: true }).waitFor();
   await page.getByText('Ringing', { exact: true }).waitFor();
+  assert.equal(await page.locator('.busy-backdrop').count(), 0);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByText('Cancelled', { exact: true }).waitFor();
+  failNextCall = true;
+  await page.getByRole('button', { name: 'Call', exact: true }).click();
+  await page.getByText('Please wait…', { exact: true }).waitFor();
+  await page.getByText('Temporarily unavailable', { exact: true }).waitFor();
+  assert.equal(await page.locator('.busy-backdrop').count(), 0);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.deepEqual(errors, []);
-  console.log('PASS: verified account sign-in, TV list, call, cancel, and responsive layout (mock API).');
+  console.log('PASS: verified account sign-in, TV list, call, cancel, loading card success/failure, and responsive layout (mock API).');
 } finally {
   await browser?.close(); preview.kill();
 }

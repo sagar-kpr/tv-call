@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
 import type { Api, Call } from '@homeping/client';
 
@@ -7,7 +8,7 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
   const local = useRef<HTMLDivElement>(null), remote = useRef<HTMLDivElement>(null);
   const [joining, setJoining] = useState(false), [connected, setConnected] = useState(false);
   const [mic, setMic] = useState(false), [camera, setCamera] = useState(false);
-  const [message, setMessage] = useState('TV accepted. Join to enable your camera and microphone.');
+  const [message, setMessage] = useState('Joining your call…');
   const [audioBlocked, setAudioBlocked] = useState(false);
   const disposed = useRef(false);
   function clear() {
@@ -17,11 +18,13 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
   }
   useEffect(() => {
     disposed.current = false;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const leave = () => { clear(); };
     window.addEventListener('pagehide', leave);
-    // StrictMode's preliminary cleanup has no room to close; all connections
-    // originate from the explicit Join button rather than an effect.
-    return () => { disposed.current = true; window.removeEventListener('pagehide', leave); clear(); };
+    // Deferring lets StrictMode cancel its preliminary mount before opening media.
+    const start = setTimeout(() => void join(), 0);
+    return () => { document.body.style.overflow = previousOverflow; clearTimeout(start); disposed.current = true; window.removeEventListener('pagehide', leave); clear(); };
   }, []);
   useEffect(() => {
     let pending = false;
@@ -94,15 +97,15 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
       }
     } catch (error) { setMessage((error as Error).message); }
   }
-  return <div className="video-call">
-    <p role="status">{message}</p>
+  return createPortal(<div className="video-call" role="dialog" aria-modal="true" aria-label="HomePing video call">
+    <p className="video-status" role="status">{joining && <span className="spinner" aria-hidden="true" />} {message}</p>
     <div className="video-stage"><div ref={remote} className="remote-media" /><div ref={local} className="local-media" /></div>
-    <div className="row-actions">
-      {!connected && <button className="primary" disabled={joining} onClick={() => void join()}>{joining ? 'Connecting…' : 'Join video call'}</button>}
+    <div className="row-actions call-controls">
+      {!connected && <button className="primary" disabled={joining} onClick={() => void join()}>{joining ? 'Connecting…' : 'Retry connection'}</button>}
       {connected && <><button className="secondary" onClick={() => void toggle('mic')}>{mic ? 'Mute' : 'Enable microphone'}</button>
         <button className="secondary" onClick={() => void toggle('camera')}>{camera ? 'Camera off' : 'Enable camera'}</button></>}
       {audioBlocked && <button className="secondary" onClick={() => void roomRef.current?.startAudio()}>Play TV audio</button>}
       <button className="danger" onClick={async () => { clear(); setConnected(false); try { changed(await api.end(call.id)); } catch (error) { setMessage((error as Error).message); } }}>End call</button>
     </div>
-  </div>;
+  </div>, document.body);
 }
