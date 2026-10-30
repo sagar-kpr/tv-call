@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "tsx watch --env-file=../../.env src/index.ts",
     "build": "tsc -p .",
     "start": "node --env-file=../../.env dist/apps/server/src/index.js",
+    "start:hosted": "node dist/apps/server/src/index.js",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
@@ -17,8 +21,9 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
-    "tsx": "^4.20.0",
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
-    "@types/cors": "^2.8.19"
+    "tsx": "^4.20.0"
   }
 }

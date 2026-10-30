@@ -15,7 +15,8 @@
     "test": "npm run test -w @homeping/server",
     "android": "npm run android -w @homeping/mobile",
     "test:web": "node scripts/smoke-web.mjs",
-    "build:apks": "bash scripts/build-apks.sh"
+    "build:apks": "bash scripts/build-apks.sh",
+    "deploy:firebase": "npm run build -w @homeping/web && firebase deploy --only hosting,firestore:rules"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

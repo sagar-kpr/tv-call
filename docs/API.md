@@ -1,32 +1,89 @@
-# Backend API
+# HomePing backend API
 
-Base: `/api`. JSON bodies. All endpoints except `GET /config` require a Firebase Authentication ID token. TV ownership is its Firebase user UID. Caller access is granted only by a pairing code. IDs must contain ASCII letters, digits, `_`, or `-` (128 characters maximum).
+Base path: `/api`. JSON request and response bodies. Human endpoints require
+a Firebase ID token with `email_verified: true`. TV endpoints require the
+custom claims `role: "tv"`, `ownerUid`, and `deviceId`, plus a matching
+active device document.
 
-| Method / path | Body | Result / authorization |
+The public `GET /config` and the device-authorization start/poll routes are
+bootstrap exceptions because an unapproved TV does not yet have a Firebase
+identity.
+
+## Authentication and devices
+
+| Method and path | Authentication | Body / result |
 | --- | --- | --- |
-| GET `/config` | — | Public `apiKey`, `projectId`, `androidAppId`, `messagingSenderId` |
-| POST `/devices/register` | `{name, token, hardware?}` | `{tvId}`; register/update the authenticated TV identity |
-| POST `/devices/pairing-code` | `{}` | `{code, expiresAt}`; registered TV only; expires after 5 minutes |
-| POST `/pair` | `{code}` | `{tvId, name}`; grants this caller access; reusable within expiry for both callers |
-| GET `/devices` | — | Array of paired `{tvId, name}` records for this caller |
-| GET `/devices/active-call` | — | `{call: Call | null}` for the authenticated TV; recovery after activity/process loss |
-| POST `/calls` | `{tvId}` | New call; caller must be paired; 409 if TV busy/token unavailable |
-| GET `/calls/:id` | — | Call; originating caller or owning TV only |
-| POST `/calls/:id/action` | `{action}` | Updated call; see transitions below |
+| GET `/config` | Public | Firebase public configuration and optional Google OAuth client IDs |
+| POST `/device-authorizations` | Bootstrap secret | `{registration, deviceSecret}` → code, authorization ID, ten-minute expiry, poll interval |
+| POST `/device-authorizations/poll` | Authorization ID + secret | Pending status or a one-time Firebase custom token |
+| POST `/device-authorizations/inspect` | Verified human | `{code}` → brand, model, expiry before approval |
+| POST `/device-authorizations/approve` | Verified human | `{code}` → newly owned TV |
+| POST `/tv/register` | Matching TV | Refresh detected fields, FCM token, and last-seen |
+| PATCH `/tv/settings` | Matching TV | Strict body containing only `name`, `room`, and/or `doNotDisturb` |
+| GET `/tv/active-call` | Matching TV | Ringing/accepted call used for recovery |
+| GET `/devices` | Verified human | Account's TVs |
+| PATCH `/devices/:deviceId` | Owner | Strict body containing only `name` and/or `room` |
+| DELETE `/devices/:deviceId` | Owner | Delete document, revoke tokens, and delete the unique TV Firebase user |
 
-Call JSON: `id`, `tvId`, `callerId`, `status`, `createdAt`, `expiresAt`, `updatedAt`, `delivery`, optional `receivedAt`, optional `error`. Times are Unix milliseconds. `delivery` is `pending | submitted | failed`.
+Registration fields are `deviceId`, `manufacturer`, `model`,
+`androidVersion`, `apiLevel`, `screenWidthPx`, `screenHeightPx`,
+`firmwareFingerprint`, `builtInCameraAvailable`, `usbHostSupported`,
+`usbCameraAttached`, `cameraApiCount`, and optional `fcmToken`.
 
-Transitions:
+## Calls
 
-- `ringing → accepted / rejected`: TV actions `accept` / `reject`.
-- `ringing → cancelled`: originating caller action `cancel`.
-- `ringing → expired`: server deadline check on read/action or the next invitation.
-- `ringing → failed`: FCM submission failure; `error` contains a machine-readable failure code.
-- `accepted → ended`: TV action `end`.
-- `receive`: TV acknowledgment while ringing, recorded once; does not accept a call.
+| Method and path | Authentication | Body / result |
+| --- | --- | --- |
+| POST `/devices/:deviceId/calls` | Owner | Create invitation; terminal Declined for DND or Busy for an occupied TV |
+| GET `/calls/:callId` | Owner or target TV | Current authoritative state |
+| POST `/calls/:callId/action` | Role-dependent | `{action}` where action is `receive`, `accept`, `decline`, `cancel`, or `end` |
 
-Retries of the same completed action return its current state. Conflicting transitions return 409; a cancelled/expired call never becomes accepted. The create operation itself is not idempotent: do not automatically retry a timed-out POST. Firestore serializes competing creations; only one can succeed. Push submission may complete after the TV acknowledgment without overwriting that acknowledgment/state.
+Call fields:
 
-Errors: `{error: string}`; invalid input may also include `details`. 400 malformed input/pairing code; 401 authentication; 403 ownership; 404 missing resource; 409 state conflict; 429 rate limit; 500 backend error. Pairing is limited to ten attempts per UID per five minutes and all authenticated API traffic to 300 requests/IP/minute. Restarting the single backend resets these limits. No proxy headers are trusted by default.
+```ts
+{
+  id: string
+  deviceId: string
+  ownerUid: string
+  callerUid: string
+  status: "ringing" | "accepted" | "declined" | "missed" |
+          "busy" | "cancelled" | "ended" | "failed"
+  createdAt: number
+  expiresAt: number
+  updatedAt: number
+  delivery: "pending" | "submitted" | "failed" | "not-sent"
+  receivedAt?: number
+  error?: string
+}
+```
 
-Firestore collections: `devices`, `pairings` (SHA-256 code keys), `callers`, `calls`. Client Firestore access is denied by rules. Pairing/call expiry is enforced by the application, not Firestore TTL. Historical documents remain until manually cleaned up; the prototype has no automatic retention policy.
+Times are Unix milliseconds. `receive` records FCM receipt separately from
+FCM submission and visual presentation. Calls expire to Missed at 30 seconds.
+Repeated completed actions are idempotent; conflicting transitions return 409.
+Expired or cancelled invitations cannot be accepted.
+
+Calls are limited to five per user per minute and thirty per hour.
+Device-authorization starts are limited to five per IP/device per ten minutes,
+approvals to ten per user per ten minutes, and polls to one per authorization
+every five seconds.
+
+## Firestore
+
+`users/{uid}/devices/{deviceId}` stores account-owned TVs. Operational fields
+include the detected registration fields, `authUid`, `fcmToken`,
+`activeCallId`, `doNotDisturb`, `lastSeen`, timestamps, and schema version.
+
+`deviceAuthorizations/{authorizationId}` contains only hashed codes/secrets,
+state, expiry, registration preview, and approval/consumption timestamps.
+`deviceAuthorizationCodes/{codeHash}` is the short-code lookup.
+`deviceOwners/{deviceId}` prevents one TV UUID from belonging to two accounts.
+`calls/{callId}` stores call state.
+
+Admin SDK operations enforce writes. Firestore rules allow a verified human to
+read only their own user/device paths. TV principals and all clients are denied
+direct writes.
+
+Errors use `{error: string}`, with validation details where applicable:
+400 invalid input/code, 401 invalid or unverified authentication, 403 ownership
+or role failure, 404 missing resource, 409 state conflict, 410 expired device
+authorization, and 429 rate limit.

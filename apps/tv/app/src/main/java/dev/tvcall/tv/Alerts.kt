@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -46,6 +47,16 @@ object Ui {
         orientation = LinearLayout.VERTICAL; setPadding(64, 36, 64, 36); setBackgroundColor(Color.rgb(18, 38, 31))
     }
     fun text(c: Context, label: String, size: Float = 22f): TextView = TextView(c).apply { text = label; textSize = size; setTextColor(Color.WHITE); setPadding(0, 8, 0, 12) }
+    fun input(c: Context, label: String, value: String = ""): EditText = EditText(c).apply {
+        hint = label; setText(value); setSingleLine(true); textSize = 19f; isFocusable = true
+        setPadding(18, 14, 18, 14)
+        setOnFocusChangeListener { _, focused ->
+            setTextColor(if (focused) Color.BLACK else Color.WHITE)
+            setHintTextColor(if (focused) Color.DKGRAY else Color.LTGRAY)
+            setBackgroundColor(if (focused) Color.rgb(211, 239, 177) else Color.rgb(48, 80, 62))
+        }
+        setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY); setBackgroundColor(Color.rgb(48, 80, 62))
+    }
     fun button(c: Context, label: String, click: () -> Unit): Button = Button(c).apply {
         text = label; textSize = 20f; isFocusable = true; setOnClickListener { click() }
         setOnFocusChangeListener { _, focused -> setTextColor(if(focused) Color.BLACK else Color.WHITE); setBackgroundColor(if(focused) Color.rgb(211,239,177) else Color.rgb(48,80,62)) }

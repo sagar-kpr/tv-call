@@ -1,113 +1,192 @@
-# HomePing — incoming invitation proof of concept
+# HomePing — TV incoming-call proof of concept
 
-A personal calling prototype for a Hisense Google TV and **web + Android** callers. It tests whether the TV can receive and present an actionable invitation while sitting on its normal home screen. **It does not stream audio or video. Hardware feasibility is not yet verified.**
+HomePing links an Android TV / Google TV from any brand to a verified Firebase account and lets that
+account send an incoming-call invitation from the web or Android caller. The TV
+can show Accept/Reject while it is on the launcher. This milestone has no audio,
+video, WebRTC, webcam permission, or TV-to-phone calling.
 
-The TV uses native Kotlin; the browser uses React/Vite; the Android caller uses React Native/Expo. A Node.js/TypeScript server verifies Firebase Authentication, stores registrations and state in Firestore, and sends high-priority, data-only FCM messages. There is no background WebSocket requirement.
+One Android APK contains a Kotlin TV receiver and a React Native/Expo phone
+caller. It detects the device on launch: television UI mode OR Leanback opens
+the TV receiver; other devices open the phone caller. The browser is React/Vite,
+and the Node.js/TypeScript server uses Firebase Auth,
+Firestore, and high-priority data-only FCM.
 
-## Quick start
+## Account and TV authorization flow
 
-Requires Node.js 22.13+ (Node 24 LTS recommended), a Firebase project, and an Internet-connected TV with Google Play services. Use a single backend instance for this prototype; pairing rate limits are process-local.
+1. Install the same `artifacts/homeping.apk` on both the TV and Android phone.
+   Sign in on the browser or phone using Google or email/password.
+   Email/password accounts must follow the verification link before any API
+   operation is allowed.
+2. Open HomePing on the TV once and select Sign in to HomePing. It connects to
+   the server address built into the APK. The TV creates
+   a random UUID and a 256-bit secret stored with Android Keystore-backed
+   encrypted storage.
+3. The TV displays an eight-character code, QR code, URL, and ten-minute
+   deadline. Scan the QR or open the URL on a phone/computer.
+4. Sign in, confirm the displayed brand/model, and approve only when the same
+   code is visible on your own TV.
+5. The TV receives a one-time Firebase custom token for a unique identity
+   `tv:{deviceId}`. It then registers under
+   `users/{accountUid}/devices/{deviceId}`.
+
+The approval code is single-use and rate-limited. The TV start and poll routes
+are the only unauthenticated API bootstrap routes. Every operational route
+requires a verified Firebase ID token. Removing a TV deletes its Firestore
+device document, revokes its refresh tokens, and deletes only that TV's Firebase
+user. The TV must then be authorized again.
+
+Legacy `devices`, `pairings`, and `callers` documents are left untouched
+but are no longer read. There is no safe automatic mapping from anonymous
+identities to account owners.
+
+## Firebase setup
+
+1. Create a Firebase project and a Firestore database.
+2. In **Authentication → Sign-in method**, enable **Email/Password** and
+   **Google**. Disable **Anonymous** sign-in; HomePing no longer uses it.
+3. Add your local/tunnel web host to Authentication's authorized domains.
+4. Register the unified Android app `dev.tvcall.caller` for FCM/runtime
+   configuration. Set `FIREBASE_ANDROID_APP_ID` to this app's Firebase
+   application ID. The old `dev.tvcall.tv` registration belongs to the
+   previous standalone prototype.
+5. Configure Google sign-in for `dev.tvcall.caller`. Add the SHA-1
+   and SHA-256 fingerprints for the debug/development signing key, then create
+   Android and Web OAuth clients. Put their IDs in `.env`.
+6. Deploy [firestore.rules](firestore.rules):
+
+   ```sh
+   firebase deploy --only firestore:rules --project YOUR_PROJECT_ID
+   ```
+
+   Verified human users can read only their own device documents. Direct
+   writes are denied. A TV principal cannot read the owner's device list.
+7. Keep a Firebase Admin service-account JSON outside this repository and set
+   `GOOGLE_APPLICATION_CREDENTIALS` to its absolute path.
+
+Copy `.env.example` to `.env` and configure the Firebase public values,
+OAuth client IDs, and Admin credential path. Restart the server after changes.
+
+## Run locally
+
+Requires Node.js 22.13+ and JDK 17/Android SDK for APK builds.
 
 ```sh
 npm ci
-cp .env.example .env
-# Configure .env as described below.
 npm run build
 npm run dev
 ```
 
-Open http://localhost:3000 for the built browser caller. For UI development, `npm run dev:web` runs Vite at http://localhost:5173 with `/api` proxied to the server. Run the backend alongside it.
-
-Expose the backend through an HTTPS tunnel, for example with an installed [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) binary:
+The server binds to `127.0.0.1:3000`. Expose it through HTTPS for the TV and
+phone, for example:
 
 ```sh
 cloudflared tunnel --url http://127.0.0.1:3000
 ```
 
-Open the returned HTTPS URL in the caller browser. Enter that same URL in the TV and Android app. The backend serves the built web app and API from one origin. Keep the PC awake; a temporary tunnel URL can change on restart, requiring the TV and caller to reconnect. No permanent hosting is configured.
+For local development only, set `HOMEPING_BACKEND_URL` in the developer's
+`.env` before building an APK. The phone and TV connect automatically; no URL
+entry exists in either app. The backend serves the web app from the same
+origin. Temporary tunnel URLs change when restarted and require a new build;
+use the permanent deployment below for distribution.
 
-## Firebase setup
+For web development, run `npm run dev:web` alongside the backend. Configure
+`WEB_ORIGIN` for any separate Vite origin.
 
-1. Create a project in the [Firebase Console](https://console.firebase.google.com/). Enable **Authentication → Sign-in method → Anonymous**.
-2. Create a Firestore database. Deploy `firestore.rules` with `firebase deploy --only firestore:rules --project YOUR_PROJECT_ID`, or paste those rules into the console. Clients never access Firestore directly; its rules deny client access. Admin SDK authorization is enforced by the backend.
-3. Register an Android app with package **dev.tvcall.tv**. Copy its `mobilesdk_app_id`, API key, project ID, and project number/sender ID into `.env`. You do not need to place `google-services.json` in this repository: the TV initializes Firebase at runtime using `/api/config`.
-4. Create/download a service-account JSON with access to Firebase Authentication, Firestore, and FCM. Keep it **outside** the repo. Set `GOOGLE_APPLICATION_CREDENTIALS` to its absolute path. Ensure the Firebase Cloud Messaging API is enabled. Use Application Default Credentials instead if your environment already supplies them.
-5. Restart the server after changing `.env`. `/health` checks the process; it does not verify Firebase credentials. A successful TV registration and invitation test verify the Firebase path.
-
-The API key and Android application ID are public Firebase configuration, not Admin credentials. Both caller interfaces use Firebase's anonymous sign-up/refresh REST APIs and persist their session on that device. Clearing app/browser data removes pairing access, requiring pairing again. Changing Firebase projects on the TV requires clearing HomePing app data first.
-
-## Build and install Android apps
-
-HomePing branding has been updated in source. Existing `tv-call-*.apk` files and screenshots in `artifacts/` are from the previous build and still show the old name. The next build creates the `homeping-*.apk` files listed below. Android application IDs (`dev.tvcall.tv` and `dev.tvcall.caller`) stay compatible with existing installations and Firebase registration.
-
-Install JDK 17 and the Android SDK command-line tools. Set `JAVA_HOME` and `ANDROID_HOME`; accept SDK licenses with `sdkmanager --licenses`. Install:
-
-```sh
-sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
-npm ci
-./scripts/build-apks.sh
-```
-
-The build script uses the shared SDK and JDK at `$HOME/Android/Sdk` and `$HOME/.jdks/zulu-17` when they are available. It retains project-local `.tools` fallback detection for older setups. The first native build downloads Gradle/Maven dependencies. React Native/Expo generates its Android project from the tracked source and app configuration.
-
-Outputs in `artifacts/`:
-
-- `homeping-tv-debug.apk`: TV prototype, installable without Firebase build-time configuration.
-- `homeping-caller-standalone.apk`: standalone Android caller with JS included; release variant signed with the generated **development debug key**, for personal testing. No Metro server required.
-- `homeping-caller-debug.apk`: conventional React Native debug build; requires Metro (`npm run start -w @homeping/mobile`). Use the standalone APK for unattended phone tests.
-- `SHA256SUMS`: artifact checksums.
-
-Caller builds include ARM64 and ARMv7. To build an emulator APK, add `x86_64` to `reactNativeArchitectures` in the build command. Do not distribute these development-signed packages as production releases.
-
-Enable developer options and USB/network debugging on your TV, then authorize your computer. Install using ADB (select the serial with `ANDROID_SERIAL` if multiple devices are attached):
-
-```sh
-adb devices -l
-adb install -r artifacts/homeping-tv-debug.apk
-adb shell am start -n dev.tvcall.tv/.SetupActivity
-./scripts/inspect-tv.sh > artifacts/tv-device.txt
-```
-
-For USB installation, copy the TV APK to a USB drive, open it in a TV file manager, and enable installation from that source when prompted. Open HomePing once after installation. Grant notifications if requested, enter the HTTPS tunnel URL, and select **Register TV / get pairing code**. A code lasts five minutes and can pair both callers. Then press **Home**.
-
-Install the standalone caller APK on the Android phone, enter the tunnel URL, connect, and pair with the TV's code. In the browser, open the tunnel URL and enter the same code. Press **Call TV** from either caller.
-
-## TV notification experiment
-
-Start with **Experimental overlay OFF**. The app creates a high-importance call notification with Accept/Reject actions, a TV content intent, and a full-screen intent. The OS chooses presentation; posting a notification does **not** prove it appeared or that the remote can operate it. Check channel settings if you previously disabled its alerts. On Android 14+, the setup screen also links to full-screen-intent permission settings.
-
-Acceptance opens an activity directly through an activity PendingIntent, then validates the invitation against the backend before showing “Call accepted.” It never requests camera or microphone access. Select **End call and return home** to finish.
-
-If the standard path fails, enable **Experimental overlay** in setup and allow display over other apps. If firmware hides that setting, the one-time ADB fallback is:
-
-```sh
-adb shell appops set dev.tvcall.tv SYSTEM_ALERT_WINDOW allow
-```
-
-The overlay is focusable and highlights the selected button. Test D-pad/OK, cancellation, Home/Back behavior, and launch after acceptance on the real remote. Permission alone does not prove usable focus or successful background activity launch. Revoke with `adb shell appops set dev.tvcall.tv SYSTEM_ALERT_WINDOW default`.
-
-The ringing service exists only during a pending invitation, with a local expiry timer and server polling. It removes the prompt after cancellation, expiry, rejection, or acceptance. FCM cancellation is best effort; polling reconciles dropped messages. The app queues registration retries with WorkManager after token changes or reboot. No persistent foreground service runs at boot. A manufacturer can still restrict background delivery.
-
-## API and state
-
-All `/api` endpoints except `/api/config` require a Firebase ID token in `Authorization: Bearer …`. See [API reference](docs/API.md).
-
-Invitations ring for 30 seconds. A Firestore transaction permits one ringing/accepted call per TV. The server stores `delivery` separately from `receivedAt`: **FCM submitted** means Firebase accepted the push; **TV acknowledged** means the app reached the backend after receiving it. Neither proves visible presentation. Hardware timing evidence comes from logs and observation.
-
-Expired invitations cannot be accepted. Deadline checks are evaluated from persisted state on reads/actions, so backend restarts do not reset the deadline. Duplicate receipt/action requests are idempotent. Invalid FCM tokens fail the invitation and require registration refresh. Delayed cancellation cannot dismiss a different invitation.
-
-For this prototype, an accepted placeholder has no media/disconnection heartbeat. End it on the TV. If the TV process dies after acceptance, use **Recover active call** in setup to reopen/end it. Calling again remains blocked until that accepted call ends.
-
-## Verification
+## Build and install
 
 ```sh
 npm run typecheck
 npm test
 npm run build
+./scripts/build-apks.sh
 ```
 
-Run `npm run test:web` with an installed Chrome/Chromium binary (`CHROME_BIN` can override its path) for the mocked browser smoke test.
+Android build outputs are created locally under ignored `artifacts/`. APKs and
+checksums must not be committed. The build produces one installable file:
+`artifacts/homeping.apk` (ARM64 and ARMv7, Android 8.0+). Its Android package
+ID is `dev.tvcall.caller`, so it upgrades the existing phone installation.
+The existing Kotlin source in `apps/tv` is compiled into that APK by a local
+Expo config plugin; it is not a second app users must install. The old TV test
+host remains available for native development, but is not built by the
+distribution script.
 
-Backend tests use an isolated transactional in-memory store. An additional Firestore adapter test runs when `FIRESTORE_EMULATOR_HOST` is set; see the test report. They do not simulate Hisense firmware or FCM transport.
+```sh
+adb install -r artifacts/homeping.apk
+adb shell am start -n dev.tvcall.caller/.HomePingLauncherActivity
+```
 
-Follow [the hardware test procedure and report](docs/HARDWARE_TEST.md). The milestone remains **unverified** until that report contains actual Hisense results, including remote operation, ten invitations per caller, idle/reboot behavior, and latency. Do not buy a webcam yet; USB media compatibility and WebRTC are subsequent gates.
+The TV is detected when either `UI_MODE_TYPE_TELEVISION` or
+`FEATURE_LEANBACK` is present. For unusual firmware, long-press the HomePing
+heading to open the hidden device-mode screen: **Auto detect**, **Run as TV**,
+or **Run as phone**. On the TV remote, focus HomePing and hold OK.
+On a phone, long-press the HomePing heading. The choice persists between launches.
+
+If the old `dev.tvcall.tv` prototype is installed, remove that old app and
+authorize the TV once in the unified app. It has a different Android package
+and cannot inherit the old app's Keystore, Firebase session, or local UUID.
+Remove its old TV entry from account settings to avoid a duplicate listing.
+This is a development-signed build for personal tests.
+
+## Permanent hosting: Render + Firebase
+
+Render runs the existing Node.js API. Firebase Hosting serves the React website;
+Firestore stores TVs and calls, Firebase Auth manages accounts, and FCM delivers
+invitations. This deployment does not use Firebase Functions or require upgrading
+Firebase for backend compute.
+
+1. Create a Render Blueprint from this repository using `render.yaml`. It
+   selects one free Node web service, binds to `0.0.0.0` on Render's supplied
+   port, and checks `/health`.
+2. Set the prompted public Firebase settings. Set `WEB_URL` and
+   `WEB_ORIGIN` to `https://YOUR_PROJECT_ID.web.app`. Add Google OAuth client
+   IDs as Render environment variables if configured.
+3. Add a Render secret file named `homeping-service-account.json` with your
+   Firebase Admin credentials. The backend reads
+   `/etc/secrets/homeping-service-account.json`; never commit it or put it
+   into the website/APK. The identity needs Auth, Firestore, and FCM access.
+4. After Render gives you its actual HTTPS URL, set
+   `HOMEPING_BACKEND_URL=https://YOUR_ACTUAL_SERVICE.onrender.com` in your
+   local `.env`. Both the web build and single phone/TV APK use this address.
+   Do not invent a Render URL from a proposed service name.
+5. Run `npm run deploy:firebase -- --project YOUR_PROJECT_ID` to build/deploy
+   the website and Firestore rules. Firebase Hosting does not proxy API calls:
+   the website calls Render directly with Firebase ID tokens and allowed CORS.
+6. Verify Render's `/health` and `/api/config`, verified sign-in, QR approval
+   opening the Firebase website, device registration, and a real invitation.
+7. Run `npm run build:apks`. Distribute only `artifacts/homeping.apk` after
+   the live checks pass. End users never enter a server address.
+
+Render's free service sleeps after 15 minutes without inbound traffic and can
+take about a minute to start again. It is suitable for this prototype but
+cannot guarantee the ten-second invitation target after server idle.
+See [Render's free-service limits](https://render.com/docs/free).
+Firebase services remain subject to their own no-cost quotas.
+
+## TV settings and call behavior
+
+The TV automatically records manufacturer, model, Android/API version,
+resolution, firmware fingerprint, built-in camera availability, USB host
+support, whether a USB camera is attached, Camera2 API count, FCM token, and
+last-seen time. It never records serial number, IMEI, MAC address, or Wi-Fi
+name. Only name, room, and Do Not Disturb are editable.
+
+The caller lists all TVs under the signed-in account with brand/model and
+last-seen time. It does not claim a TV is online. Calls can become Ringing,
+Accepted, Declined, Missed, Busy, Cancelled, Ended, or Failed. DND immediately
+returns Declined without sending FCM. One ringing/accepted call is allowed per
+TV and ringing expires after 30 seconds.
+
+Start with the experimental overlay off. Android first receives a high-priority
+FCM message and posts a high-importance call notification with Accept/Reject
+actions and a full-screen intent. If the firmware does not present it, enable
+the overlay and grant its one-time permission. **Reliable mode is off by
+default**; when enabled it schedules a periodic token/registration refresh. It
+does not bypass Android force-stop or manufacturer background restrictions.
+
+The TV debug section keeps the last 20 lifecycle, FCM, notification, overlay,
+registration, and call events locally without storing tokens. Use it together
+with observation on the real TV; a logged notification is not proof that a
+visible, remote-operable prompt appeared.
+
+See [API documentation](docs/API.md) and the
+[hardware verification procedure](docs/HARDWARE_TEST.md).

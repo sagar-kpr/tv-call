@@ -1,158 +1,87 @@
 export type CallStatus =
   | 'ringing'
   | 'accepted'
-  | 'rejected'
+  | 'declined'
+  | 'missed'
+  | 'busy'
   | 'cancelled'
-  | 'expired'
   | 'ended'
   | 'failed';
 export type Call = {
-  id: string;
-  tvId: string;
-  callerId: string;
-  status: CallStatus;
-  createdAt: number;
-  expiresAt: number;
-  delivery: 'pending' | 'submitted' | 'failed';
-  receivedAt?: number;
-  updatedAt: number;
-  error?: string;
+  id: string; deviceId: string; ownerUid: string; callerUid: string;
+  status: CallStatus; createdAt: number; expiresAt: number;
+  delivery: 'pending' | 'submitted' | 'failed' | 'not-sent';
+  receivedAt?: number; updatedAt: number; error?: string;
+};
+export type TvDevice = {
+  deviceId: string; type: 'tv'; name: string; room: string | null;
+  manufacturer: string; model: string; androidVersion: string; apiLevel: number;
+  screenWidthPx: number; screenHeightPx: number; firmwareFingerprint: string;
+  builtInCameraAvailable: boolean; usbHostSupported: boolean;
+  usbCameraAttached: boolean; cameraApiCount: number; doNotDisturb: boolean;
+  lastSeen: number; createdAt: number; updatedAt: number;
 };
 export type PublicConfig = {
-  apiKey: string;
-  projectId: string;
-  androidAppId: string;
-  messagingSenderId: string;
+  apiKey: string; projectId: string; androidAppId: string; messagingSenderId: string;
+  authDomain?: string; googleWebClientId?: string; googleAndroidClientId?: string;
+  webUrl?: string;
 };
-export type Storage = {
-  getItem(key: string): Promise<string | null>;
-  setItem(key: string, value: string): Promise<void>;
-};
-type Session = { idToken: string; refreshToken: string; expiresAt: number };
 async function jsonFetch(url: string, options: RequestInit = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    const data = await response.json();
-    return { response, data };
-  } finally {
-    clearTimeout(timeout);
-  }
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const text = await response.text();
+    return { response, data: text ? JSON.parse(text) : {} };
+  } finally { clearTimeout(timeout); }
 }
 export class Api {
-  private session?: Session;
-  private config?: PublicConfig;
-  private authPending?: Promise<string>;
   readonly base: string;
-  constructor(
-    base: string,
-    private storage: Storage,
-  ) {
+  constructor(base: string, private getIdToken: (forceRefresh?: boolean) => Promise<string>) {
     this.base = base.trim().replace(/\/$/, '');
-    if (
-      !/^https:\/\//.test(this.base) &&
-      !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(this.base)
-    )
-      throw new Error(
-        'Use an HTTPS backend URL (or localhost for development).',
-      );
+    if (!/^https:\/\//.test(this.base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(this.base))
+      throw new Error('Use an HTTPS backend URL (or localhost for development).');
   }
-  async init() {
-    const { response, data } = await jsonFetch(`${this.base}/api/config`);
+  static async config(base: string): Promise<PublicConfig> {
+    const normalized = base.trim().replace(/\/$/, '');
+    const { response, data } = await jsonFetch(`${normalized}/api/config`);
     if (!response.ok) throw new Error('Backend configuration unavailable');
-    this.config = data;
-    const saved = await this.storage.getItem(`session:${this.base}`);
-    if (saved) {
-      try {
-        this.session = JSON.parse(saved);
-      } catch {
-        /* replace invalid local session */
-      }
-    }
-    await this.token();
+    return data as PublicConfig;
   }
-  private async token(): Promise<string> {
-    if (this.session && this.session.expiresAt > Date.now() + 60_000)
-      return this.session.idToken;
-    if (this.authPending) return this.authPending;
-    this.authPending = this.authenticate().finally(() => {
-      this.authPending = undefined;
-    });
-    return this.authPending;
-  }
-  private async authenticate() {
-    if (!this.config) throw new Error('Connect to the backend first');
-    const refresh = this.session?.refreshToken;
-    const url = refresh
-      ? `https://securetoken.googleapis.com/v1/token?key=${this.config.apiKey}`
-      : `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${this.config.apiKey}`;
-    const { response, data } = await jsonFetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': refresh
-          ? 'application/x-www-form-urlencoded'
-          : 'application/json',
-      },
-      body: refresh
-        ? new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: refresh,
-          }).toString()
-        : JSON.stringify({ returnSecureToken: true }),
-    });
-    if (!response.ok)
-      throw new Error(
-        data.error?.message ??
-          'Firebase authentication failed; enable Anonymous sign-in.',
-      );
-    this.session = {
-      idToken: data.idToken ?? data.id_token,
-      refreshToken: data.refreshToken ?? data.refresh_token,
-      expiresAt: Date.now() + Number(data.expiresIn ?? data.expires_in) * 1000,
-    };
-    await this.storage.setItem(
-      `session:${this.base}`,
-      JSON.stringify(this.session),
-    );
-    return this.session.idToken;
-  }
-  async request<T>(
-    path: string,
-    body?: unknown,
-    method = body === undefined ? 'GET' : 'POST',
-  ): Promise<T> {
-    const token = await this.token();
-    const { response, data } = await jsonFetch(`${this.base}/api${path}`, {
+  async request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
+    const send = async (force = false) => jsonFetch(`${this.base}/api${path}`, {
       method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${await this.getIdToken(force)}`, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!response.ok)
-      throw new Error(data.error ?? `Request failed (${response.status})`);
-    return data as T;
+    let result = await send();
+    if (result.response.status === 401) result = await send(true);
+    if (!result.response.ok) throw new Error(result.data.error ?? `Request failed (${result.response.status})`);
+    return result.data as T;
   }
-  pair(code: string) {
-    return this.request<{ tvId: string; name: string }>('/pair', { code });
+  devices() { return this.request<TvDevice[]>('/devices'); }
+  updateDevice(deviceId: string, changes: { name?: string; room?: string | null }) {
+    return this.request<TvDevice>(`/devices/${deviceId}`, changes, 'PATCH');
   }
-  devices() {
-    return this.request<Array<{ tvId: string; name: string }>>('/devices');
+  removeDevice(deviceId: string) { return this.request<void>(`/devices/${deviceId}`, undefined, 'DELETE'); }
+  call(deviceId: string) { return this.request<Call>(`/devices/${deviceId}/calls`, {}); }
+  getCall(id: string) { return this.request<Call>(`/calls/${id}`); }
+  cancel(id: string) { return this.request<Call>(`/calls/${id}/action`, { action: 'cancel' }); }
+  approveDevice(code: string) {
+    return this.request<{ deviceId: string; name: string }>('/device-authorizations/approve', { code });
   }
-  call(tvId: string) {
-    return this.request<Call>('/calls', { tvId });
-  }
-  getCall(id: string) {
-    return this.request<Call>(`/calls/${id}`);
-  }
-  cancel(id: string) {
-    return this.request<Call>(`/calls/${id}/action`, { action: 'cancel' });
+  inspectDevice(code: string) {
+    return this.request<{ manufacturer: string; model: string; expiresAt: number }>(
+      '/device-authorizations/inspect',
+      { code },
+    );
   }
 }
-export const isTerminal = (status: CallStatus) =>
-  !['ringing', 'accepted'].includes(status);
+export const isTerminal = (status: CallStatus) => !['ringing', 'accepted'].includes(status);
+export const emptyDeviceMessage = (devices: TvDevice[]) => devices.length === 0 ? 'No TV detected' : null;
+export function lastSeenLabel(lastSeen: number, now = Date.now()) {
+  const minutes = Math.max(0, Math.floor((now - lastSeen) / 60_000));
+  if (minutes < 1) return 'last seen less than a minute ago';
+  if (minutes === 1) return 'last seen 1 minute ago';
+  return `last seen ${minutes} minutes ago`;
+}

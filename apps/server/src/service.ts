@@ -1,104 +1,203 @@
-import { createHash, randomInt, randomUUID } from 'node:crypto';
-import type { Call } from '../../../packages/client/src/index.js';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { Call, TvDevice } from '../../../packages/client/src/index.js';
 import type { Store, Transaction } from './store.js';
+
 export class Fault extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
+  constructor(public status: number, message: string) { super(message); }
 }
-export interface Push {
-  send(token: string, data: Record<string, string>, ttl: number): Promise<void>;
+export type HumanPrincipal = { kind: 'human'; uid: string; email: string };
+export type TvPrincipal = { kind: 'tv'; uid: string; ownerUid: string; deviceId: string };
+export type Principal = HumanPrincipal | TvPrincipal;
+export interface Push { send(token: string, data: Record<string, string>, ttl: number): Promise<void>; }
+export interface DeviceAuthAdmin {
+  customToken(uid: string, claims: Record<string, unknown>): Promise<string>;
+  revoke(uid: string): Promise<void>;
+  deleteUser(uid: string): Promise<void>;
 }
-type Device = {
-  uid: string;
-  name: string;
-  token: string;
-  activeCallId: string | null;
-  updatedAt: number;
-  hardware: Record<string, string>;
+export type TvRegistration = Omit<TvDevice, 'type' | 'name' | 'room' | 'doNotDisturb' | 'lastSeen' | 'createdAt' | 'updatedAt'> & {
+  fcmToken?: string | null;
 };
-type Pairing = { tvId: string; expiresAt: number };
-type Grant = { tvId: string; name: string };
-type Caller = { devices: Grant[] };
-const digest = (code: string) =>
-  createHash('sha256').update(code).digest('hex');
+type StoredDevice = TvDevice & { authUid: string; fcmToken: string | null; activeCallId: string | null; schemaVersion: 1 };
+type Authorization = {
+  authorizationId: string; deviceId: string; deviceSecretHash: string; userCodeHash: string;
+  status: 'pending' | 'approved' | 'consumed' | 'expired'; registration: TvRegistration;
+  approvedBy: string | null; createdAt: number; expiresAt: number; approvedAt: number | null; consumedAt: number | null;
+};
+type CodeLookup = { authorizationId: string; expiresAt: number };
+type DeviceOwner = { ownerUid: string; authUid: string };
+const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (call: Call, now: number): Call =>
-  call.status === 'ringing' && call.expiresAt <= now
-    ? { ...call, status: 'expired', updatedAt: now }
-    : call;
+  call.status === 'ringing' && call.expiresAt <= now ? { ...call, status: 'missed', updatedAt: now } : call;
+const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const generateCode = () => Array.from(randomBytes(8), (b) => codeAlphabet[b % codeAlphabet.length]).join('');
+const publicDevice = (device: StoredDevice): TvDevice => {
+  const { authUid: _a, fcmToken: _f, activeCallId: _c, schemaVersion: _s, ...result } = device;
+  return result;
+};
+
 export class Calls {
   constructor(
     private store: Store,
     private push: Push,
+    private auth: DeviceAuthAdmin,
     private now = Date.now,
-    private code = () => String(randomInt(100000, 1000000)),
+    private userCode = generateCode,
   ) {}
-  async register(
-    uid: string,
-    name: string,
-    token: string,
-    hardware: Record<string, string>,
-  ) {
-    return this.store.run(async (tx) => {
-      const old = await tx.get<Device>(`devices/${uid}`);
-      tx.set(`devices/${uid}`, {
-        uid,
-        name,
-        token,
-        hardware,
-        activeCallId: old?.activeCallId ?? null,
-        updatedAt: this.now(),
-      });
-      return { tvId: uid };
-    });
-  }
-  async pairing(uid: string) {
-    // Random collisions are retried instead of overwriting another TV's pairing code.
-    for (let i = 0; i < 8; i++) {
-      const code = this.code();
-      const path = `pairings/${digest(code)}`;
+
+  async beginAuthorization(registration: TvRegistration, secret: string) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = this.userCode();
+      const authorizationId = randomUUID();
       const result = await this.store.run(async (tx) => {
-        if (!(await tx.get<Device>(`devices/${uid}`)))
-          throw new Fault(404, 'Register TV first');
-        const old = await tx.get<Pairing>(path);
-        if (old && old.expiresAt > this.now()) return null;
-        const expiresAt = this.now() + 5 * 60_000;
-        tx.set(path, { tvId: uid, expiresAt });
-        return { code, expiresAt };
+        const codePath = `deviceAuthorizationCodes/${digest(code)}`;
+        const existing = await tx.get<CodeLookup>(codePath);
+        if (existing && existing.expiresAt > this.now()) return null;
+        const createdAt = this.now(), expiresAt = createdAt + 10 * 60_000;
+        const authorization: Authorization = {
+          authorizationId, deviceId: registration.deviceId, deviceSecretHash: digest(secret),
+          userCodeHash: digest(code), status: 'pending', registration,
+          approvedBy: null, createdAt, expiresAt, approvedAt: null, consumedAt: null,
+        };
+        tx.set(`deviceAuthorizations/${authorizationId}`, authorization);
+        tx.set(codePath, { authorizationId, expiresAt });
+        return { authorizationId, code, expiresAt, pollInterval: 5 };
       });
       if (result) return result;
     }
-    throw new Fault(503, 'Try generating a pairing code again');
+    throw new Fault(503, 'Could not allocate a device code; try again');
   }
-  async pair(uid: string, code: string) {
+
+  async approveAuthorization(ownerUid: string, rawCode: string) {
+    const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
     return this.store.run(async (tx) => {
-      const pair = await tx.get<Pairing>(`pairings/${digest(code)}`);
-      if (!pair || pair.expiresAt <= this.now())
-        throw new Fault(400, 'Invalid or expired pairing code');
-      const device = await tx.get<Device>(`devices/${pair.tvId}`);
-      const caller = (await tx.get<Caller>(`callers/${uid}`)) ?? {
-        devices: [],
+      const lookup = await tx.get<CodeLookup>(`deviceAuthorizationCodes/${digest(code)}`);
+      if (!lookup) throw new Fault(400, 'Invalid or expired device code');
+      const path = `deviceAuthorizations/${lookup.authorizationId}`;
+      const authorization = await tx.get<Authorization>(path);
+      if (!authorization || authorization.expiresAt <= this.now()) {
+        if (authorization) tx.set(path, { ...authorization, status: 'expired' });
+        throw new Fault(400, 'Invalid or expired device code');
+      }
+      if (authorization.status !== 'pending') throw new Fault(409, 'Device code has already been used');
+      const authUid = `tv:${authorization.deviceId}`;
+      const ownerPath = `deviceOwners/${authorization.deviceId}`;
+      const existingOwner = await tx.get<DeviceOwner>(ownerPath);
+      if (existingOwner && existingOwner.ownerUid !== ownerUid)
+        throw new Fault(409, 'This TV belongs to another account; remove it there first');
+      const old = await tx.get<StoredDevice>(`users/${ownerUid}/devices/${authorization.deviceId}`);
+      if (old && old.authUid !== authUid) throw new Fault(409, 'Device ID is already registered');
+      const now = this.now();
+      const device: StoredDevice = {
+        ...authorization.registration, authUid, type: 'tv',
+        name: old?.name ?? 'Living Room TV',
+        room: old?.room ?? null, doNotDisturb: old?.doNotDisturb ?? false,
+        fcmToken: authorization.registration.fcmToken ?? old?.fcmToken ?? null,
+        activeCallId: old?.activeCallId ?? null, lastSeen: now, createdAt: old?.createdAt ?? now, updatedAt: now, schemaVersion: 1,
       };
-      if (!device) throw new Fault(404, 'TV not registered');
-      const grant = { tvId: pair.tvId, name: device.name };
-      tx.set(`callers/${uid}`, {
-        devices: [...caller.devices.filter((d) => d.tvId !== pair.tvId), grant],
-      });
-      return grant;
+      tx.set(`users/${ownerUid}/devices/${authorization.deviceId}`, device);
+      tx.set(ownerPath, { ownerUid, authUid });
+      tx.set(path, { ...authorization, status: 'approved', approvedBy: ownerUid, approvedAt: now });
+      return { deviceId: device.deviceId, name: device.name, manufacturer: device.manufacturer, model: device.model };
     });
   }
-  async devices(uid: string) {
-    return this.store.run(
-      async (tx) => (await tx.get<Caller>(`callers/${uid}`))?.devices ?? [],
-    );
-  }
-  async active(uid: string) {
+
+  async authorizationPreview(rawCode: string) {
+    const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
     return this.store.run(async (tx) => {
-      const device = await tx.get<Device>(`devices/${uid}`);
-      if (!device?.activeCallId) return null;
+      const lookup = await tx.get<CodeLookup>(`deviceAuthorizationCodes/${digest(code)}`);
+      if (!lookup) throw new Fault(400, 'Invalid or expired device code');
+      const authorization = await tx.get<Authorization>(`deviceAuthorizations/${lookup.authorizationId}`);
+      if (!authorization || authorization.expiresAt <= this.now() || authorization.status !== 'pending')
+        throw new Fault(400, 'Invalid, expired, or already used device code');
+      return {
+        manufacturer: authorization.registration.manufacturer,
+        model: authorization.registration.model,
+        expiresAt: authorization.expiresAt,
+      };
+    });
+  }
+
+  async pollAuthorization(authorizationId: string, secret: string) {
+    const consumed = await this.store.run(async (tx) => {
+      const path = `deviceAuthorizations/${authorizationId}`;
+      const auth = await tx.get<Authorization>(path);
+      if (!auth || auth.deviceSecretHash !== digest(secret)) throw new Fault(404, 'Authorization not found');
+      if (auth.expiresAt <= this.now()) {
+        if (auth.status === 'pending') tx.set(path, { ...auth, status: 'expired' });
+        throw new Fault(410, 'Device code expired');
+      }
+      if (auth.status === 'pending') return null;
+      if (auth.status !== 'approved' || !auth.approvedBy) throw new Fault(409, 'Device code has already been used');
+      tx.set(path, { ...auth, status: 'consumed', consumedAt: this.now() });
+      return { ownerUid: auth.approvedBy, deviceId: auth.deviceId };
+    });
+    if (!consumed) return { status: 'pending' as const };
+    const uid = `tv:${consumed.deviceId}`;
+    const customToken = await this.auth.customToken(uid, { role: 'tv', ownerUid: consumed.ownerUid, deviceId: consumed.deviceId });
+    return { status: 'approved' as const, customToken };
+  }
+
+  private async ownedDevice(tx: Transaction, ownerUid: string, deviceId: string) {
+    const device = await tx.get<StoredDevice>(`users/${ownerUid}/devices/${deviceId}`);
+    if (!device) throw new Fault(403, 'You do not own this TV');
+    return device;
+  }
+  private async tvDevice(tx: Transaction, principal: TvPrincipal) {
+    const device = await this.ownedDevice(tx, principal.ownerUid, principal.deviceId);
+    if (device.authUid !== principal.uid) throw new Fault(403, 'TV authorization was removed');
+    return device;
+  }
+  async registerTv(principal: TvPrincipal, registration: TvRegistration) {
+    if (registration.deviceId !== principal.deviceId) throw new Fault(403, 'Device identity mismatch');
+    return this.store.run(async (tx) => {
+      const old = await this.tvDevice(tx, principal);
+      const now = this.now();
+      const next: StoredDevice = {
+        ...old, ...registration, deviceId: old.deviceId, authUid: old.authUid,
+        type: 'tv', name: old.name, room: old.room, doNotDisturb: old.doNotDisturb,
+        activeCallId: old.activeCallId, fcmToken: registration.fcmToken ?? old.fcmToken,
+        createdAt: old.createdAt, lastSeen: now, updatedAt: now, schemaVersion: 1,
+      };
+      tx.set(`users/${principal.ownerUid}/devices/${principal.deviceId}`, next);
+      return publicDevice(next);
+    });
+  }
+  async updateTvSettings(principal: TvPrincipal, changes: { name?: string; room?: string | null; doNotDisturb?: boolean }) {
+    return this.store.run(async (tx) => {
+      const device = await this.tvDevice(tx, principal);
+      const next = { ...device, ...changes, updatedAt: this.now(), lastSeen: this.now() };
+      tx.set(`users/${principal.ownerUid}/devices/${principal.deviceId}`, next);
+      return publicDevice(next);
+    });
+  }
+  async devices(ownerUid: string) {
+    return this.store.run(async (tx) => (await tx.list<StoredDevice>(`users/${ownerUid}/devices`))
+      .filter((d) => d.type === 'tv').map(publicDevice).sort((a, b) => a.name.localeCompare(b.name)));
+  }
+  async updateDevice(ownerUid: string, deviceId: string, changes: { name?: string; room?: string | null }) {
+    return this.store.run(async (tx) => {
+      const device = await this.ownedDevice(tx, ownerUid, deviceId);
+      const next = { ...device, ...changes, updatedAt: this.now() };
+      tx.set(`users/${ownerUid}/devices/${deviceId}`, next);
+      return publicDevice(next);
+    });
+  }
+  async removeDevice(ownerUid: string, deviceId: string) {
+    const authUid = await this.store.run(async (tx) => {
+      const device = await this.ownedDevice(tx, ownerUid, deviceId);
+      tx.delete(`users/${ownerUid}/devices/${deviceId}`);
+      tx.delete(`deviceOwners/${deviceId}`);
+      return device.authUid;
+    });
+    await this.auth.revoke(authUid);
+    try { await this.auth.deleteUser(authUid); } catch (error) {
+      if ((error as { code?: string }).code !== 'auth/user-not-found') throw error;
+    }
+  }
+  async active(principal: TvPrincipal) {
+    return this.store.run(async (tx) => {
+      const device = await this.tvDevice(tx, principal);
+      if (!device.activeCallId) return null;
       const raw = await tx.get<Call>(`calls/${device.activeCallId}`);
       if (!raw) return null;
       const current = live(raw, this.now());
@@ -106,143 +205,96 @@ export class Calls {
       return ['ringing', 'accepted'].includes(current.status) ? current : null;
     });
   }
-  private async authorized(tx: Transaction, uid: string, tvId: string) {
-    const caller = await tx.get<Caller>(`callers/${uid}`);
-    if (!caller?.devices.some((d) => d.tvId === tvId))
-      throw new Fault(403, 'Pair with this TV first');
-  }
-  async create(uid: string, tvId: string) {
+  async create(ownerUid: string, deviceId: string) {
     const id = randomUUID();
     const { call, token } = await this.store.run(async (tx) => {
-      await this.authorized(tx, uid, tvId);
-      const device = await tx.get<Device>(`devices/${tvId}`);
-      if (!device?.token)
-        throw new Fault(409, 'TV push token unavailable; reopen TV setup');
-      const old = device.activeCallId
-        ? await tx.get<Call>(`calls/${device.activeCallId}`)
-        : undefined;
-      const current = old && live(old, this.now());
-      if (current && ['ringing', 'accepted'].includes(current.status))
-        throw new Fault(409, 'TV already has an active invitation or call');
+      const device = await this.ownedDevice(tx, ownerUid, deviceId);
       const now = this.now();
+      const terminal = (status: 'declined' | 'busy'): Call => ({
+        id, deviceId, ownerUid, callerUid: ownerUid, status, createdAt: now,
+        expiresAt: now, delivery: 'not-sent', updatedAt: now,
+      });
+      if (device.doNotDisturb) {
+        const call = terminal('declined'); tx.set(`calls/${id}`, call); return { call, token: null };
+      }
+      const old = device.activeCallId ? await tx.get<Call>(`calls/${device.activeCallId}`) : undefined;
+      const current = old && live(old, now);
+      if (current && ['ringing', 'accepted'].includes(current.status)) {
+        const call = terminal('busy'); tx.set(`calls/${id}`, call); return { call, token: null };
+      }
+      if (!device.fcmToken) throw new Fault(409, 'TV push token unavailable; reopen HomePing on the TV');
       const call: Call = {
-        id,
-        tvId,
-        callerId: uid,
-        status: 'ringing',
-        createdAt: now,
-        expiresAt: now + 30_000,
-        delivery: 'pending',
-        updatedAt: now,
+        id, deviceId, ownerUid, callerUid: ownerUid, status: 'ringing',
+        createdAt: now, expiresAt: now + 30_000, delivery: 'pending', updatedAt: now,
       };
-      if (old && current && old.status !== current.status)
-        tx.set(`calls/${old.id}`, current);
+      if (old && current && old.status !== current.status) tx.set(`calls/${old.id}`, current);
       tx.set(`calls/${id}`, call);
-      tx.set(`devices/${tvId}`, { ...device, activeCallId: id });
-      return { call, token: device.token };
+      tx.set(`users/${ownerUid}/devices/${deviceId}`, { ...device, activeCallId: id });
+      return { call, token: device.fcmToken };
     });
+    if (!token) return call;
     try {
-      await this.push.send(
-        token,
-        { type: 'invite', callId: id, expiresAt: String(call.expiresAt) },
-        Math.max(0, call.expiresAt - this.now()),
-      );
+      await this.push.send(token, { type: 'invite', callId: id, expiresAt: String(call.expiresAt) }, Math.max(0, call.expiresAt - this.now()));
       await this.store.run(async (tx) => {
         const current = await tx.get<Call>(`calls/${id}`);
-        if (current)
-          tx.set(`calls/${id}`, { ...current, delivery: 'submitted' });
+        if (current) tx.set(`calls/${id}`, { ...current, delivery: 'submitted' });
       });
     } catch (error) {
-      const code = String(
-        (error as { code?: string }).code ?? 'push-send-failed',
-      );
+      const code = String((error as { code?: string }).code ?? 'push-send-failed');
       await this.store.run(async (tx) => {
         const current = await tx.get<Call>(`calls/${id}`);
-        const device = await tx.get<Device>(`devices/${tvId}`);
-        if (current)
-          tx.set(`calls/${id}`, {
-            ...current,
-            delivery: 'failed',
-            status: current.status === 'ringing' ? 'failed' : current.status,
-            error: code,
-            updatedAt: this.now(),
-          });
-        if (
-          device &&
-          device.token === token &&
-          [
-            'messaging/registration-token-not-registered',
-            'messaging/invalid-registration-token',
-          ].includes(code)
-        )
-          tx.set(`devices/${tvId}`, { ...device, token: '' });
+        const device = await tx.get<StoredDevice>(`users/${ownerUid}/devices/${deviceId}`);
+        if (current) tx.set(`calls/${id}`, { ...current, delivery: 'failed', status: current.status === 'ringing' ? 'failed' : current.status, error: code, updatedAt: this.now() });
+        if (device && device.fcmToken === token && ['messaging/registration-token-not-registered', 'messaging/invalid-registration-token'].includes(code))
+          tx.set(`users/${ownerUid}/devices/${deviceId}`, { ...device, fcmToken: null });
       });
     }
-    return this.get(uid, id);
+    return this.get({ kind: 'human', uid: ownerUid, email: '' }, id);
   }
-  async get(uid: string, id: string) {
+  async get(principal: Principal, id: string) {
     return this.store.run(async (tx) => {
       const call = await tx.get<Call>(`calls/${id}`);
       if (!call) throw new Fault(404, 'Call not found');
-      if (uid !== call.tvId && uid !== call.callerId)
-        throw new Fault(403, 'Not your call');
+      const allowed = principal.kind === 'human' ? principal.uid === call.ownerUid :
+        principal.ownerUid === call.ownerUid && principal.deviceId === call.deviceId;
+      if (!allowed) throw new Fault(403, 'Not your call');
       const current = live(call, this.now());
       if (current.status !== call.status) tx.set(`calls/${id}`, current);
       return current;
     });
   }
-  async action(
-    uid: string,
-    id: string,
-    action: 'receive' | 'accept' | 'reject' | 'cancel' | 'end',
-  ) {
+  async action(principal: Principal, id: string, action: 'receive' | 'accept' | 'decline' | 'cancel' | 'end') {
     const result = await this.store.run(async (tx) => {
       const raw = await tx.get<Call>(`calls/${id}`);
       if (!raw) throw new Fault(404, 'Call not found');
-      const tvAction = ['receive', 'accept', 'reject', 'end'].includes(action);
-      if (tvAction ? uid !== raw.tvId : uid !== raw.callerId)
-        throw new Fault(403, 'Action forbidden');
-      const device = await tx.get<Device>(`devices/${raw.tvId}`);
+      const tvAction = ['receive', 'accept', 'decline', 'end'].includes(action);
+      if (tvAction) {
+        if (principal.kind !== 'tv' || principal.ownerUid !== raw.ownerUid || principal.deviceId !== raw.deviceId)
+          throw new Fault(403, 'Action forbidden');
+        await this.tvDevice(tx, principal);
+      } else if (principal.kind !== 'human' || principal.uid !== raw.ownerUid) throw new Fault(403, 'Action forbidden');
+      const path = `users/${raw.ownerUid}/devices/${raw.deviceId}`;
+      const device = await tx.get<StoredDevice>(path);
       let call = live(raw, this.now());
-      const target = {
-        accept: 'accepted',
-        reject: 'rejected',
-        cancel: 'cancelled',
-        end: 'ended',
-      } as const;
+      const target = { accept: 'accepted', decline: 'declined', cancel: 'cancelled', end: 'ended' } as const;
       if (action === 'receive') {
-        if (call.status === 'ringing' && !call.receivedAt)
-          call = { ...call, receivedAt: this.now(), updatedAt: this.now() };
+        if (call.status === 'ringing' && !call.receivedAt) call = { ...call, receivedAt: this.now(), updatedAt: this.now() };
       } else if (call.status === target[action]) {
-        /* idempotent retry */
-      } else if (
-        (call.status === 'ringing' &&
-          ['accept', 'reject', 'cancel'].includes(action)) ||
-        (call.status === 'accepted' && action === 'end')
-      )
+        // idempotent retry
+      } else if ((call.status === 'ringing' && ['accept', 'decline', 'cancel'].includes(action)) || (call.status === 'accepted' && action === 'end')) {
         call = { ...call, status: target[action], updatedAt: this.now() };
-      else {
+      } else {
         if (call.status !== raw.status) tx.set(`calls/${id}`, call);
-        return { call, conflict: true, token: device?.token };
+        return { call, conflict: true, token: device?.fcmToken };
       }
       tx.set(`calls/${id}`, call);
-      return { call, conflict: false, token: device?.token };
+      if (device && !['ringing', 'accepted'].includes(call.status) && device.activeCallId === id)
+        tx.set(path, { ...device, activeCallId: null });
+      return { call, conflict: false, token: device?.fcmToken };
     });
     if (result.conflict) throw new Fault(409, `Call is ${result.call.status}`);
     if (action === 'cancel' && result.token) {
-      try {
-        await this.push.send(
-          result.token,
-          {
-            type: 'cancel',
-            callId: id,
-            expiresAt: String(result.call.expiresAt),
-          },
-          0,
-        );
-      } catch {
-        /* TV also polls authoritative state */
-      }
+      try { await this.push.send(result.token, { type: 'cancel', callId: id, expiresAt: String(result.call.expiresAt) }, 0); } catch { /* polling reconciles */ }
     }
     return result.call;
   }

@@ -33,7 +33,7 @@ class IncomingActivity : Activity() {
         }.apply { isEnabled = false }
         val reject = Ui.button(this, "Reject") {
             Backend.io.execute {
-                try { Backend.action(this, id, "reject"); runOnUiThread { dismiss(); finish() } }
+                try { Backend.action(this, id, "decline"); DebugEvents.add(this, "Call ${id.take(8)} declined"); runOnUiThread { dismiss(); finish() } }
                 catch(e: Exception) { runOnUiThread { status.text = "Could not reject: ${e.message}" } }
             }
         }.apply { isEnabled = false }

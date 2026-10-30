@@ -18,3 +18,5 @@ artifacts/*
 !artifacts/.gitkeep
 .tools/
 /google-services.json
+firebase-debug.log
+firestore-debug.log

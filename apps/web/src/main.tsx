@@ -1,250 +1,165 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Api, isTerminal, type Call } from '@homeping/client';
+import { getApps, initializeApp } from 'firebase/app';
+import {
+  browserLocalPersistence, createUserWithEmailAndPassword, getAuth,
+  GoogleAuthProvider, onAuthStateChanged, reload, sendEmailVerification,
+  sendPasswordResetEmail, setPersistence, signInWithEmailAndPassword,
+  signInWithPopup, signOut, type User,
+} from 'firebase/auth';
+import {
+  Api, emptyDeviceMessage, isTerminal, lastSeenLabel,
+  type Call, type PublicConfig, type TvDevice,
+} from '@homeping/client';
 import './style.css';
-function App() {
-  const api = useRef<Api | null>(null);
-  const [ready, setReady] = useState(false),
-    [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [code, setCode] = useState(''),
-    [devices, setDevices] = useState<Array<{ tvId: string; name: string }>>([]),
-    [tv, setTv] = useState(''),
-    [call, setCall] = useState<Call | null>(null);
-  const [clock, setClock] = useState(Date.now());
-  useEffect(() => {
-    let active = true;
-    const client =
-      api.current ??
-      new Api(location.origin, {
-        getItem: async (k) => localStorage.getItem(k),
-        setItem: async (k, v) => {
-          localStorage.setItem(k, v);
-        },
-      });
-    api.current = client;
-    client
-      .init()
-      .then(() => client.devices())
-      .then((d) => {
-        if (active) {
-          setDevices(d);
-          setTv(d[0]?.tvId ?? '');
-          setReady(true);
-        }
-      })
-      .catch((e) => {
-        if (active) setError(e.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+
+const backendUrl = (import.meta.env.VITE_HOMEPING_API_URL || location.origin).replace(/\/+$/, '');
+
+function AuthScreen({ config, onError }: { config: PublicConfig; onError: (value: string) => void }) {
+  const auth = getAuth();
+  const [email, setEmail] = useState(''), [password, setPassword] = useState('');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [busy, setBusy] = useState(false);
+  async function run(action: () => Promise<unknown>) {
+    setBusy(true); onError('');
+    try { await action(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); }
+  }
+  return <section className="card">
+    <h2>{mode === 'signup' ? 'Create your HomePing account' : mode === 'forgot' ? 'Reset your password' : 'Sign in to HomePing'}</h2>
+    <p className="muted">Use the same verified account on your phone, browser, and TV.</p>
+    <label className="field">Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
+    {mode !== 'forgot' && <label className="field">Password<input className="normal-input" type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
+    <button className="primary" disabled={busy || !email || (mode !== 'forgot' && password.length < 6)} onClick={() => run(async () => {
+      if (mode === 'signup') {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        await sendEmailVerification(result.user);
+      } else if (mode === 'forgot') {
+        await sendPasswordResetEmail(auth, email); onError('Password reset email sent.');
+      } else await signInWithEmailAndPassword(auth, email, password);
+    })}>{mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset email' : 'Sign in'}</button>
+    {mode !== 'forgot' && <button className="secondary" disabled={busy} onClick={() => run(() => signInWithPopup(auth, new GoogleAuthProvider()))}>Continue with Google</button>}
+    <div className="auth-links">
+      <button className="link" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Already have an account?' : 'Create account'}</button>
+      <button className="link" onClick={() => setMode(mode === 'forgot' ? 'signin' : 'forgot')}>{mode === 'forgot' ? 'Back to sign in' : 'Forgot password?'}</button>
+    </div>
+    {!config.googleWebClientId && <p className="muted">Google sign-in also requires the authorized domain and OAuth configuration described in the README.</p>}
+  </section>;
+}
+
+function Verification({ user, onError }: { user: User; onError: (value: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true); onError('');
+    try { await fn(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); }
+  };
+  return <section className="card"><h2>Verify your email</h2>
+    <p className="muted">We sent a verification link to <strong>{user.email}</strong>. Verify it before using HomePing.</p>
+    <button className="primary" disabled={busy} onClick={() => run(async () => { await reload(user); if (!user.emailVerified) throw new Error('Email is not verified yet.'); location.reload(); })}>I verified my email</button>
+    <button className="secondary" disabled={busy} onClick={() => run(() => sendEmailVerification(user))}>Resend verification email</button>
+    <button className="link" onClick={() => signOut(getAuth())}>Use another account</button>
+  </section>;
+}
+
+function Activation({ api, initialCode, done }: { api: Api; initialCode: string; done: () => void }) {
+  const [code, setCode] = useState(initialCode), [preview, setPreview] = useState<{ manufacturer: string; model: string } | null>(null);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const inspect = async () => {
+    setBusy(true); setError('');
+    try { setPreview(await api.inspectDevice(code.replace(/[\s-]/g, '').toUpperCase())); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  useEffect(() => { if (initialCode) void inspect(); }, []);
+  return <section className="card">
+    <h2>Authorize your TV</h2>
+    <div className="warning">Approve only if this code is on your own TV.</div>
+    <label className="field">TV code<input value={code} maxLength={9} onChange={e => { setCode(e.target.value.toUpperCase()); setPreview(null); }} /></label>
+    {!preview ? <button className="primary" disabled={busy || code.replace(/\W/g, '').length !== 8} onClick={inspect}>Check TV</button> :
+      <><div className="device-preview"><strong>{preview.manufacturer} {preview.model}</strong><p>Confirm that this matches the TV showing the code.</p></div>
+        <button className="primary" disabled={busy} onClick={async () => {
+          setBusy(true); setError('');
+          try { await api.approveDevice(code.replace(/[\s-]/g, '').toUpperCase()); done(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+        }}>Approve this TV</button></>}
+    {error && <div className="error">{error}</div>}
+    <button className="link" onClick={done}>Back to my TVs</button>
+  </section>;
+}
+
+function DeviceEditor({ device, api, changed }: { device: TvDevice; api: Api; changed: () => Promise<void> }) {
+  const [name, setName] = useState(device.name), [room, setRoom] = useState(device.room ?? ''), [busy, setBusy] = useState(false);
+  return <div className="device-row">
+    <label className="field">Name<input className="normal-input" value={name} onChange={e => setName(e.target.value)} /></label>
+    <label className="field">Room<input className="normal-input" value={room} onChange={e => setRoom(e.target.value)} /></label>
+    <p className="muted">{device.manufacturer} {device.model} · {lastSeenLabel(device.lastSeen)}</p>
+    <div className="row-actions">
+      <button className="secondary" disabled={busy || !name.trim()} onClick={async () => { setBusy(true); try { await api.updateDevice(device.deviceId, { name, room: room || null }); await changed(); } finally { setBusy(false); } }}>Save</button>
+      <button className="danger" disabled={busy} onClick={async () => {
+        if (!confirm(`Remove ${device.name}? The TV must be authorized again.`)) return;
+        setBusy(true); try { await api.removeDevice(device.deviceId); await changed(); } finally { setBusy(false); }
+      }}>Remove</button>
+    </div>
+  </div>;
+}
+
+function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
+  const [devices, setDevices] = useState<TvDevice[]>([]), [call, setCall] = useState<Call | null>(null);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [clock, setClock] = useState(Date.now());
+  const [activate, setActivate] = useState(!!activationCode), [settings, setSettings] = useState(false);
+  const load = async () => setDevices(await api.devices());
+  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
   useEffect(() => {
     if (!call || isTerminal(call.status)) return;
-    let active = true;
-    let running = false;
     const timer = setInterval(async () => {
       setClock(Date.now());
-      if (running) return;
-      running = true;
-      try {
-        const next = await api.current!.getCall(call.id);
-        if (active) {
-          setCall(next);
-          setError('');
-        }
-      } catch (e) {
-        if (active) setError((e as Error).message);
-      } finally {
-        running = false;
-      }
+      try { setCall(await api.getCall(call.id)); } catch (e) { setError((e as Error).message); }
     }, 1000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
+    return () => clearInterval(timer);
   }, [call?.id, call?.status]);
-  async function run(fn: () => Promise<void>) {
-    setBusy(true);
-    setError('');
-    try {
-      await fn();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  const live = call && !isTerminal(call.status);
-  return (
-    <main>
-      <header>
-        <a className="brand" href="/" aria-label="HomePing home">
-          <span className="brand-icon">▣</span> HomePing
-        </a>
-        <span className="badge">INVITATION PROTOTYPE</span>
-      </header>
-      <section className="intro">
-        <p className="eyebrow">A LITTLE CLOSER TO HOME</p>
-        <h1>
-          Your living room.
-          <br />
-          <em>One call away.</em>
-        </h1>
-        <p>
-          Send an invitation to your TV. Someone at home can accept with the
-          remote.
-        </p>
-      </section>
-      <section className="card" aria-label="Call your TV">
-        <div className="card-top">
-          <span className="tv-icon">▣</span>
-          <span className={`connection ${ready ? 'online' : ''}`}>
-            {ready ? 'Caller connected' : 'Connecting…'}
-          </span>
-        </div>
-        <h2>{devices.find((d) => d.tvId === tv)?.name ?? 'Connect your TV'}</h2>
-        <p className="muted">
-          {devices.length
-            ? 'Ready when someone is home.'
-            : 'Open HomePing on your television once to get a pairing code.'}
-        </p>
-        {devices.length > 0 && (
-          <label className="field">
-            Television
-            <select
-              disabled={!!live || busy}
-              value={tv}
-              onChange={(e) => setTv(e.target.value)}
-            >
-              {devices.map((d) => (
-                <option key={d.tvId} value={d.tvId}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {devices.length > 0 && (
-          <button
-            className="primary"
-            disabled={!ready || busy || !!live}
-            onClick={() =>
-              run(async () => {
-                setCall(await api.current!.call(tv));
-                setClock(Date.now());
-              })
-            }
-          >
-            Call TV <span>↗</span>
-          </button>
-        )}
-        {call && (
-          <div className="call-state" role="status" aria-live="polite">
-            <strong>
-              {
-                {
-                  ringing: 'Calling your TV…',
-                  accepted: 'Accepted on TV',
-                  rejected: 'Invitation rejected',
-                  cancelled: 'Invitation cancelled',
-                  expired: 'No answer',
-                  ended: 'Call ended',
-                  failed: 'Delivery failed',
-                }[call.status]
-              }
-            </strong>
-            {call.status === 'ringing' && (
-              <p>
-                {call.receivedAt
-                  ? 'TV acknowledged the invitation'
-                  : call.delivery === 'submitted'
-                    ? 'FCM submitted · waiting for TV acknowledgment'
-                    : 'Sending invitation'}{' '}
-                · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s
-              </p>
-            )}
-            {call.status === 'accepted' && (
-              <p>
-                The TV opened the placeholder call. Video and audio come in a
-                later milestone. End using the TV remote.
-              </p>
-            )}
-            {call.status === 'failed' && <p>{call.error}</p>}
-            {call.status === 'ringing' && (
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => setCall(await api.current!.cancel(call.id)))
-                }
-              >
-                Cancel invitation
-              </button>
-            )}
-          </div>
-        )}
-        <details open={!devices.length}>
-          <summary>
-            {devices.length ? 'Pair another TV' : 'Enter your pairing code'}
-          </summary>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(async () => {
-                const paired = await api.current!.pair(code);
-                setDevices(await api.current!.devices());
-                setTv(paired.tvId);
-                setCode('');
-              });
-            }}
-          >
-            <label className="field">
-              6-digit code
-              <input
-                inputMode="numeric"
-                autoComplete="off"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                placeholder="000000"
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-              />
-            </label>
-            <button
-              className="secondary"
-              disabled={!ready || busy || code.length !== 6}
-            >
-              Pair TV
-            </button>
-          </form>
-        </details>
-        {error && (
-          <div className="error" role="alert">
-            {error}
-            {!ready && (
-              <button className="secondary" onClick={() => location.reload()}>
-                Reconnect
-              </button>
-            )}
-          </div>
-        )}
-      </section>
-      <footer>
-        <span>01 — Pair once</span>
-        <span>02 — Send an invitation</span>
-        <span>03 — Accept on TV</span>
-      </footer>
-      <p className="footnote">
-        This prototype tests incoming invitations. No camera or microphone is
-        used.
-      </p>
-    </main>
-  );
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true); setError(''); try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  if (activate) return <Activation api={api} initialCode={activationCode} done={() => { history.replaceState({}, '', '/'); setActivate(false); void load(); }} />;
+  return <section className="card wide">
+    <div className="card-top"><h2>{settings ? 'Paired TVs' : 'Your TVs'}</h2>
+      <button className="link inline" onClick={() => setSettings(!settings)}>{settings ? 'Done' : 'Settings'}</button></div>
+    {settings ? devices.map(device => <DeviceEditor key={device.deviceId} device={device} api={api} changed={load} />) :
+      <>{emptyDeviceMessage(devices) && <div className="empty"><strong>No TV detected</strong><p>Open HomePing on your TV and authorize it with this account.</p><button className="secondary" onClick={() => setActivate(true)}>Enter TV code</button></div>}
+      {devices.map(device => <div className="device-row" key={device.deviceId}>
+        <h3>{device.name}</h3><p className="muted">{device.manufacturer} {device.model}{device.room ? ` · ${device.room}` : ''}<br />{lastSeenLabel(device.lastSeen, clock)}</p>
+        <button className="primary" disabled={busy || (!!call && !isTerminal(call.status))} onClick={() => run(async () => setCall(await api.call(device.deviceId)))}>Call</button>
+      </div>)}</>}
+    {call && <div className="call-state" role="status"><strong>{({
+      ringing: 'Ringing', accepted: 'Accepted', declined: 'Declined', missed: 'Missed',
+      busy: 'Busy', cancelled: 'Cancelled', ended: 'Call ended', failed: 'Delivery failed',
+    } as Record<string,string>)[call.status]}</strong>
+      {call.status === 'ringing' && <><p>{call.receivedAt ? 'TV received the invitation' : call.delivery === 'submitted' ? 'Invitation sent' : 'Sending'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</p>
+      <button className="secondary" disabled={busy} onClick={() => run(async () => setCall(await api.cancel(call.id)))}>Cancel</button></>}
+    </div>}
+    {!settings && devices.length > 0 && <button className="link" onClick={() => setActivate(true)}>Authorize another TV</button>}
+    {error && <div className="error">{error}</div>}
+  </section>;
 }
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+
+function App() {
+  const [config, setConfig] = useState<PublicConfig | null>(null), [user, setUser] = useState<User | null>(null);
+  const [loaded, setLoaded] = useState(false), [error, setError] = useState('');
+  useEffect(() => {
+    Api.config(backendUrl).then(async cfg => {
+      setConfig(cfg);
+      const firebase = getApps()[0] ?? initializeApp({ apiKey: cfg.apiKey, projectId: cfg.projectId, appId: cfg.androidAppId, messagingSenderId: cfg.messagingSenderId, authDomain: cfg.authDomain });
+      const auth = getAuth(firebase); await setPersistence(auth, browserLocalPersistence);
+      return onAuthStateChanged(auth, value => { setUser(value); setLoaded(true); });
+    }).catch(e => setError(e.message));
+  }, []);
+  const api = useMemo(() => user ? new Api(backendUrl, force => user.getIdToken(!!force)) : null, [user]);
+  const activationCode = new URLSearchParams(location.search).get('activate') ?? '';
+  return <main><header><a className="brand" href="/"><span className="brand-icon">▣</span> HomePing</a>
+    {user && <button className="link inline" onClick={() => signOut(getAuth())}>Sign out</button>}</header>
+    <section className="intro"><p className="eyebrow">A LITTLE CLOSER TO HOME</p><h1>Your living room.<br/><em>One call away.</em></h1></section>
+    {!loaded || !config ? <section className="card">Connecting…</section> :
+      !user ? <AuthScreen config={config} onError={setError} /> :
+      !user.emailVerified ? <Verification user={user} onError={setError} /> :
+      <Caller api={api!} activationCode={activationCode} />}
+    {error && <div className="error global" role="alert">{error}</div>}
+    <p className="footnote">HomePing currently sends invitations only. Video and audio are not included.</p>
+  </main>;
+}
+createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

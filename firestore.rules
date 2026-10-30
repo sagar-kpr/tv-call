@@ -1,6 +1,22 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} { allow read, write: if false; }
+    function verifiedOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && (!("role" in request.auth.token) || request.auth.token.role != "tv");
+    }
+    match /users/{uid} {
+      allow read: if verifiedOwner(uid);
+      allow write: if false;
+      match /devices/{deviceId} {
+        allow read: if verifiedOwner(uid);
+        allow write: if false;
+      }
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

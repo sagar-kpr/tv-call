@@ -44,6 +44,7 @@ class RingService : Service() {
         callId = id; deadline = expires
         startForeground(Alerts.ID, Alerts.notification(this, id, expires))
         Log.i("HomePing", "Notification posted call=$id at=${System.currentTimeMillis()} overlay=${Backend.overlay(this)}")
+        DebugEvents.add(this, "Notification posted for call ${id.take(8)}")
         main.postDelayed(expire, (expires - System.currentTimeMillis()).coerceAtLeast(1))
         // Perform receipt + validation outside the main thread; polling reconciles dropped cancellation pushes.
         var acknowledged = false
@@ -70,7 +71,7 @@ class RingService : Service() {
         column.addView(accept)
         column.addView(Ui.button(this, "Reject") {
             val id = callId
-            Backend.io.execute { try { Backend.action(this, id, "reject") } catch (e: Exception) { Log.w("HomePing", "Reject failed", e) } }
+            Backend.io.execute { try { Backend.action(this, id, "decline"); DebugEvents.add(this, "Call ${id.take(8)} declined") } catch (e: Exception) { Log.w("HomePing", "Decline failed", e) } }
             close()
         })
         val params = WindowManager.LayoutParams(700, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -78,6 +79,7 @@ class RingService : Service() {
         try {
             getSystemService(WindowManager::class.java).addView(column, params); overlay = column; accept.requestFocus()
             Log.i("HomePing", "Overlay shown call=$callId at=${System.currentTimeMillis()}; verify focus on hardware")
+            DebugEvents.add(this, "Overlay shown for call ${callId.take(8)}")
         } catch (e: Exception) { Log.e("HomePing", "Overlay unavailable; notification remains", e) }
     }
     private fun close() {

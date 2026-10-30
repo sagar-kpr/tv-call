@@ -31,6 +31,7 @@ class CallActivity : Activity() {
                     if (isDestroyed) return@runOnUiThread
                     if(call.getString("status") != "accepted") { status.text = "Invitation is no longer available"; return@runOnUiThread }
                     accepted = true; closePrompt()
+                    DebugEvents.add(this@CallActivity, "Call ${id.take(8)} accepted")
                     status.text = "Call accepted\n\nInvitation prototype — video and audio are not connected."
                     accept.visibility = android.view.View.GONE; end.text = "End call and return home"; end.requestFocus()
                 }
@@ -42,7 +43,7 @@ class CallActivity : Activity() {
         if(busy) return
         busy = true; end.isEnabled = false
         Backend.io.execute {
-            try { Backend.action(this, id, "end"); runOnUiThread { busy = false; accepted = false; home() } }
+            try { Backend.action(this, id, "end"); DebugEvents.add(this, "Call ${id.take(8)} ended"); runOnUiThread { busy = false; accepted = false; home() } }
             catch(e: Exception) { runOnUiThread { busy = false; end.isEnabled = true; status.text = "Could not end: ${e.message}\nRetry when the network returns." } }
         }
     }

@@ -10,13 +10,16 @@ import com.google.firebase.messaging.RemoteMessage
 
 class MessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
+        DebugEvents.add(this, "FCM token refreshed")
         RegistrationWorker.enqueue(this)
     }
     override fun onMessageReceived(message: RemoteMessage) {
+        if (!Backend.isTvMode(this)) return
         val id = message.data["callId"] ?: return
         if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return
         val expiresAt = message.data["expiresAt"]?.toLongOrNull() ?: return
         Log.i("HomePing", "FCM ${message.data["type"]} call=$id receivedAt=${System.currentTimeMillis()}")
+        DebugEvents.add(this, "FCM ${message.data["type"]} received for call ${id.take(8)}")
         if (message.data["type"] == "cancel") {
             Alerts.clear(this, id)
             sendBroadcast(Intent("$packageName.CLOSE").setPackage(packageName).putExtra("callId", id))
@@ -37,7 +40,7 @@ class ActionReceiver : BroadcastReceiver() {
         val id = intent.getStringExtra("callId") ?: return
         val pending = goAsync()
         Backend.io.execute {
-            try { Backend.action(context, id, "reject") }
+            try { Backend.action(context, id, "decline"); DebugEvents.add(context, "Call ${id.take(8)} declined") }
             catch (e: Exception) { Log.w("HomePing", "Reject could not reach backend", e) }
             finally {
                 context.sendBroadcast(Intent("${context.packageName}.CLOSE").setPackage(context.packageName).putExtra("callId", id)); pending.finish()
@@ -51,5 +54,6 @@ class BootReceiver : BroadcastReceiver() {
         // FCM restores reception; WorkManager retries registration after network returns.
         if(Backend.base(context).isNotBlank()) RegistrationWorker.enqueue(context)
         Log.i("HomePing", "Boot completed; FCM initialized=${com.google.firebase.FirebaseApp.getApps(context).isNotEmpty()}")
+        DebugEvents.add(context, "TV boot completed")
     }
 }
