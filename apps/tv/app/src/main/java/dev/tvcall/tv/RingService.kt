@@ -25,8 +25,12 @@ class RingService : Service() {
     private var polling: ScheduledFuture<*>? = null
     private var callId = ""
     private var overlay: View? = null
+    private val ringer by lazy { IncomingRinger(this) }
+    private val sound by lazy { RingingSoundController({ ringer.start() }, { ringer.stop() }) }
     private var deadline = 0L
-    private var closed = false
+    @Volatile private var closed = false
+    private var presentationRequested = false
+    private var permissionWarningLogged = false
     private val expire = Runnable { close() }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { if (intent.getStringExtra("callId") == callId) close() }
@@ -53,8 +57,31 @@ class RingService : Service() {
                 val call = if (!acknowledged) Backend.action(this, id, "receive") else Backend.api(this, "/calls/$id")
                 acknowledged = true
                 if (call.optString("status") != "ringing") main.post { close() }
-                else main.post { if (!closed && overlay == null && Backend.overlay(this) && Settings.canDrawOverlays(this)) showOverlay() }
-            } catch (e: Exception) { Log.w("HomePing", "Call state unavailable; local deadline remains active", e) }
+                else main.post {
+                    if (closed) return@post
+                    sound.update(call.optString("status"), call.optLong("expiresAt"), System.currentTimeMillis(), Backend.ringtone(this))
+                    if (overlay != null) return@post
+                    val enabled = Backend.overlay(this)
+                    val allowed = Settings.canDrawOverlays(this)
+                    when (IncomingPromptPolicy.choose(call.optString("status"), call.optLong("expiresAt"),
+                        System.currentTimeMillis(), IncomingPresentation.screen(), enabled, allowed)) {
+                        IncomingPromptPolicy.Path.FOREGROUND -> if (!presentationRequested) {
+                            presentationRequested = IncomingPresentation.showInForeground(id)
+                            if (!presentationRequested && enabled && allowed) showOverlay()
+                        }
+                        IncomingPromptPolicy.Path.OVERLAY -> showOverlay()
+                        IncomingPromptPolicy.Path.NOTIFICATION -> if (enabled && !allowed && !permissionWarningLogged) {
+                            permissionWarningLogged = true
+                            DebugEvents.add(this, "Overlay blocked: display-over-other-apps permission is missing")
+                        }
+                        IncomingPromptPolicy.Path.NONE -> close()
+                        IncomingPromptPolicy.Path.ALREADY_VISIBLE -> {}
+                    }
+                }
+            } catch (e: Exception) {
+                // close() interrupts an in-flight read intentionally.
+                if (!closed && !Thread.currentThread().isInterrupted) Log.w("HomePing", "Call state unavailable; local deadline remains active", e)
+            }
         }, 0, 1, TimeUnit.SECONDS)
         return START_NOT_STICKY
     }
@@ -84,7 +111,7 @@ class RingService : Service() {
     }
     private fun close() {
         if (closed) return
-        closed = true; polling?.cancel(true); main.removeCallbacks(expire)
+        closed = true; sound.close(); polling?.cancel(true); main.removeCallbacks(expire)
         overlay?.let { try { getSystemService(WindowManager::class.java).removeView(it) } catch (_: Exception) {} }; overlay = null
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }

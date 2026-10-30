@@ -121,3 +121,43 @@ subscription. These are signal/routing checks, not a listening test. The system
 output was later reported as wired headphones rather than TV speakers. Actual
 speaker audibility and phone receipt of the TV signal still require confirmation
 from the person at the devices. No microphone audio was recorded for diagnostics.
+
+## Incoming prompt follow-up — 2026-10-31
+
+The connected TV received invitations and posted a high-importance notification,
+but overlay permission was not granted despite the local overlay switch being ON.
+One-time authorized ADB setup granted SYSTEM_ALERT_WINDOW. A later live invitation
+logged the overlay being added about two seconds after FCM receipt. This confirms
+the overlay code path ran; remote interaction and the full background gate still
+need visual/user verification.
+
+Added explicit permission readiness/settings UI, automatic validated incoming
+presentation for a resumed TV setup screen, and recovery of already ringing calls
+on resume. Background paths retain their actual overlay permission requirement.
+Duplicate foreground launches are suppressed; expired/nonringing calls cannot
+select a prompt. The new policy tests bring the native total to 17. No Node API,
+web deployment or phone-only update is required for this TV presentation fix.
+
+## Ringtone follow-up — 2026-10-31
+
+The user confirmed that the popup now appears over Home after granting overlay
+permission, and reported that it was silent. Added a bundled original PCM ringtone
+(no network download/system ringtone dependency), media-volume playback with
+transient focus, lifecycle cleanup, ON/OFF setting and a eight-second preview.
+Accept/Reject/cancellation/expiry/service teardown release the player. Audio
+preparation callbacks check that their player is still current before starting.
+
+The rebuilt single APK and all 22 native tests pass. Five new tests cover
+validated ringing only, duplicate suppression, terminal-state stopping, expiry,
+disablement and late callbacks after closure. The raw resource maps to the
+bundled WAV in the optimized APK; its contents match the generated source file.
+No microphone/storage permission or backend/web change is needed for ringtone
+playback. Audible sound and the full lifecycle matrix still need hardware checks.
+
+The final melodic eight-second marimba/chime asset replaced the initial two-tone
+prototype at the user's request. Its source WAV matches the optimized APK's raw
+resource. The final APK was installed successfully on the connected TV and TV
+setup reopened. Existing overlay permission remained granted after the previous
+update. Playback start/stop was observed in the preceding ringtone build's device
+logs; the new melody's audible quality is for the user to assess using Test
+ringtone or an incoming call. No claim that this is an Apple recording is made.

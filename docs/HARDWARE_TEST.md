@@ -157,3 +157,69 @@ but nothing is audible, check playback routing/mute/volume. If TV Mic stays sile
 or has no samples and no USB mic appears, check actual microphone hardware/API
 support independently. Repeat using a browser caller to isolate Android-phone
 capture from TV capture/playback.
+
+## Incoming-prompt investigation — 2026-10-31
+
+User reported that calls were found only through Recover active call and no
+incoming prompt appeared either in HomePing or over Home. On the connected TV:
+
+- FCM invite receipt and notification posting were logged; the incoming channel
+  had importance 4 (HIGH). This notification-only path did not satisfy the user's
+  visible-prompt requirement.
+- The app's overlay switch was ON, but `SYSTEM_ALERT_WINDOW` was still in default
+  mode with no grant. The old service silently skipped drawing the overlay.
+- The permitted one-time setup was applied through ADB:
+  `adb shell appops set dev.tvcall.caller SYSTEM_ALERT_WINDOW allow`.
+- A subsequent real invitation logged Overlay shown approximately 1,999 ms after
+  FCM receipt. This measures receipt-to-addView, not tap-to-visible latency or
+  remote usability, and does not replace observation by the tester.
+
+The updated app displays the difference between overlay ON and permission
+actually granted, provides a separate permission-settings button, and retains
+an explicit ADB setup message when this firmware cannot expose the settings.
+A resumed TV setup screen now opens the validated incoming prompt automatically,
+including when returning to an existing ringing invitation. Background Home
+presentation stays with notifications or the explicitly enabled, permitted
+overlay; the code does not try to bypass background activity restrictions.
+Cancelled, accepted and expired calls never select a new prompt path. A displayed
+incoming/call screen is not covered with another overlay. Dismissing the same
+foreground invitation does not cause an automatic relaunch loop.
+
+Five native policy tests cover foreground display without overlay permission,
+both requirements for background overlays, terminal/expired states, already-visible
+screens and other screens without permission. Rebuilt native tests total 17.
+Normal service shutdown no longer logs an expected interrupted HTTP read as a
+call-state failure.
+
+Still required: visually confirm the overlay over Home without opening the app
+or selecting Recover; test D-pad focus, OK-to-accept, Reject, Cancel, timeout,
+idle/process death/reboot, and ten invitations per caller. Disconnect ADB for the
+normal-use verification after the one-time grant. Record the permission as
+required on this firmware. No complete hardware pass is claimed by these logs.
+
+### User confirmation and ringtone follow-up
+
+After the overlay grant, the user confirmed that the incoming popup appears over
+Home. This is a user-observed visual success for that condition, not completion
+of the idle/reboot/latency/repetition matrix. The full incoming-call gate remains
+pending those tests.
+
+The user then reported no ringtone. Added an original, bundled eight-second
+melodic marimba/chime ringtone, repeated only for a server-validated, unexpired ringing invitation.
+It uses TV media volume/output and transient audio focus; no system volume,
+Bluetooth selection or global sound preference is changed. The local Incoming
+ringtone switch defaults ON. Test ringtone plays a eight-second preview and stops
+when leaving TV setup. DND-declined calls have no invitation and no sound.
+
+Verify audible ringing over Home and another app, plus prompt focus. Test Accept,
+Reject, caller Cancel, no answer/30-second timeout, duplicate delivery and service
+termination: all must stop sound promptly without a later restart. Check OFF,
+media volume zero/mute, external sound output and return of other app audio after
+ringing stops. Ringing in the notification-only fallback when the foreground
+service is blocked is not guaranteed; record that firmware limitation separately.
+
+Five new sound-controller tests cover duplicate validation, terminal states,
+expired/already cancelled invitations, the disabled setting and closure before
+late validation. The single APK builds with 22 passing native tests. The bundled
+PCM waveform and its packaged resource were checked; audible TV playback still
+requires listening on the device.

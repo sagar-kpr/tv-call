@@ -19,11 +19,54 @@ import org.json.JSONObject
 
 class SetupActivity : Activity() {
     @Volatile private var alive = true
+    private var ringtonePreview: IncomingRinger? = null
+    private val ringtonePreviewHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val stopRingtonePreview = Runnable { ringtonePreview?.stop(); ringtonePreview = null }
+    private var presentationStatus: android.widget.TextView? = null
+    private var overlayPermissionButton: android.widget.Button? = null
+    @Volatile private var foregroundCheck = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         render()
+    }
+    override fun onResume() {
+        super.onResume()
+        updatePresentationStatus()
+        // Existing ringing invitations are offered when this screen is resumed,
+        // even if the vendor did not display the earlier notification.
+        if (!Backend.authorized(this) || !Backend.isTvMode(this) || foregroundCheck) return
+        foregroundCheck = true
+        Backend.io.execute {
+            try {
+                val call = Backend.api(this, "/tv/active-call").optJSONObject("call")
+                runOnUiThread {
+                    if (alive && call != null && IncomingPromptPolicy.choose(call.optString("status"),
+                        call.optLong("expiresAt"), System.currentTimeMillis(), IncomingPresentation.screen(),
+                        Backend.overlay(this), Settings.canDrawOverlays(this)) == IncomingPromptPolicy.Path.FOREGROUND)
+                        IncomingPresentation.showInForeground(call.getString("id"))
+                }
+            } catch (_: Exception) { /* FCM and the recovery control remain available. */ }
+            finally { foregroundCheck = false }
+        }
+    }
+    private fun updatePresentationStatus() {
+        val allowed = Settings.canDrawOverlays(this)
+        presentationStatus?.text = if (!Backend.overlay(this))
+            "Home-screen prompt: standard notification only. TV firmware may hide it. Enable the overlay to test another presentation method."
+        else if (allowed) "Home-screen overlay: enabled and permission granted. Test a call while the TV is on Home."
+        else "Home-screen overlay is blocked: display-over-other-apps permission has not been granted. Turning the switch ON alone is not enough."
+        overlayPermissionButton?.visibility = if (Backend.overlay(this) && !allowed) View.VISIBLE else View.GONE
+    }
+    private fun openOverlayPermission(status: android.widget.TextView) {
+        try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+        catch (_: Exception) { status.text = "This TV does not expose overlay settings. One-time ADB setup: adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow" }
+    }
+    override fun onPause() {
+        ringtonePreviewHandler.removeCallbacks(stopRingtonePreview)
+        stopRingtonePreview.run()
+        super.onPause()
     }
     private fun render() {
         if (Backend.base(this).isNotBlank() && Backend.authorized(this)) renderSettings() else renderAuthorization()
@@ -155,11 +198,30 @@ class SetupActivity : Activity() {
         val overlay = Ui.button(this, "Experimental overlay: ${if (Backend.overlay(this)) "ON" else "OFF"}") {}
         overlay.setOnClickListener {
             Backend.setOverlay(this, !Backend.overlay(this)); overlay.text = "Experimental overlay: ${if (Backend.overlay(this)) "ON" else "OFF"}"
-            if (Backend.overlay(this) && !Settings.canDrawOverlays(this)) try {
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            } catch (_: Exception) { status.text = "Overlay settings are unavailable on this firmware." }
+            updatePresentationStatus()
+            if (Backend.overlay(this) && !Settings.canDrawOverlays(this)) openOverlayPermission(status)
         }
         layout.addView(overlay)
+        presentationStatus = Ui.text(this, "", 16f).also { layout.addView(it) }
+        overlayPermissionButton = Ui.button(this, "Allow display over other apps") { openOverlayPermission(status) }.also { layout.addView(it) }
+        updatePresentationStatus()
+        val ringtone = Ui.button(this, "Incoming ringtone: ${if (Backend.ringtone(this)) "ON" else "OFF"}") {}
+        ringtone.setOnClickListener {
+            Backend.setRingtone(this, !Backend.ringtone(this))
+            ringtone.text = "Incoming ringtone: ${if (Backend.ringtone(this)) "ON" else "OFF"}"
+            if (!Backend.ringtone(this)) stopRingtonePreview.run()
+            status.text = "Ringtone uses the TV media volume and selected sound output."
+        }
+        layout.addView(ringtone)
+        layout.addView(Ui.button(this, "Test ringtone") {
+            ringtonePreviewHandler.removeCallbacks(stopRingtonePreview); stopRingtonePreview.run()
+            if (Backend.ringtone(this)) {
+                volumeControlStream = android.media.AudioManager.STREAM_MUSIC
+                ringtonePreview = IncomingRinger(this).also { it.start() }
+                ringtonePreviewHandler.postDelayed(stopRingtonePreview, 8_000)
+                status.text = "Playing an 8-second melodic ringtone test. Check TV speakers, mute and media volume."
+            } else status.text = "Turn Incoming ringtone ON to test it."
+        })
         val audio = Ui.button(this, "TV audio compatibility: ${if (Backend.tvAudioCompatibility(this)) "ON" else "OFF"}") {}
         audio.setOnClickListener {
             Backend.setTvAudioCompatibility(this, !Backend.tvAudioCompatibility(this))

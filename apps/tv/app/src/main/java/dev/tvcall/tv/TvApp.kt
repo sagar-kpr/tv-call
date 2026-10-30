@@ -42,6 +42,7 @@ object TvRuntime {
     fun initialize(c: Context) {
         Backend.restore(c)
         Alerts.channels(c)
+        IncomingPresentation.initialize(c)
         DebugEvents.add(c, "HomePing process started")
         if (Backend.isTvMode(c) && Backend.base(c).isNotBlank() && Backend.authorized(c))
             RegistrationWorker.enqueue(c)
@@ -183,6 +184,8 @@ object Backend {
     fun localName(c: Context) = prefs(c).getString("name", "Living Room TV") ?: "Living Room TV"
     fun localRoom(c: Context) = prefs(c).getString("room", "") ?: ""
     fun localDnd(c: Context) = prefs(c).getBoolean("dnd", false)
+    fun ringtone(c: Context) = prefs(c).getBoolean("ringtone", true)
+    fun setRingtone(c: Context, value: Boolean) { prefs(c).edit().putBoolean("ringtone", value).apply() }
     fun overlay(c: Context) = prefs(c).getBoolean("overlay", false)
     fun setOverlay(c: Context, value: Boolean) { prefs(c).edit().putBoolean("overlay", value).apply() }
     fun tvAudioCompatibility(c: Context) = prefs(c).getBoolean("tvAudioCompatibility", true)

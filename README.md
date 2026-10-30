@@ -197,7 +197,20 @@ capture. A 90-second peer-heartbeat lease releases abandoned accepted calls.
 Start with the experimental overlay off. Android first receives a high-priority
 FCM message and posts a high-importance call notification with Accept/Reject
 actions and a full-screen intent. If the firmware does not present it, enable
-the overlay and grant its one-time permission. **Reliable mode is off by
+the overlay and grant its one-time permission. The overlay switch being ON is
+not sufficient: check that TV setup reports **permission granted**. If this TV
+has no overlay permission settings screen, one-time authorized ADB setup is:
+
+```sh
+adb shell appops set dev.tvcall.caller SYSTEM_ALERT_WINDOW allow
+```
+
+Disconnect ADB after setup and test a call over Home. With HomePing's TV setup
+screen already in front, a validated ringing call opens Accept/Reject directly;
+Recover active call remains a manual fallback. Incoming ringtone is ON by default:
+a bundled melodic marimba/chime ringtone repeats through the TV's media-volume output while the validated
+invitation rings, then stops on acceptance/rejection/cancellation/expiry. TV
+settings include an ON/OFF switch and a eight-second Test ringtone button. **Reliable mode is off by
 default**; when enabled it schedules a periodic token/registration refresh. It
 does not bypass Android force-stop or manufacturer background restrictions.
 

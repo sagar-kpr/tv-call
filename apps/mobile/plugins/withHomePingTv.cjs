@@ -120,6 +120,10 @@ dependencies {
     await fs.mkdir(target, { recursive: true });
     await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/drawable/banner.xml'),
       path.join(target, 'homeping_tv_banner.xml'));
+    const raw = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/raw');
+    await fs.mkdir(raw, { recursive: true });
+    await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/raw/homeping_ring.wav'),
+      path.join(raw, 'homeping_ring.wav'));
     return config;
   }]);
 };
