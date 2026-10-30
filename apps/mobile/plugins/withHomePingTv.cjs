@@ -22,6 +22,7 @@ module.exports = function withHomePingTv(config) {
     const permissions = [
       'INTERNET', 'ACCESS_NETWORK_STATE', 'POST_NOTIFICATIONS', 'USE_FULL_SCREEN_INTENT',
       'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC', 'SYSTEM_ALERT_WINDOW', 'RECEIVE_BOOT_COMPLETED',
+      'CAMERA', 'RECORD_AUDIO',
     ];
     manifest['uses-permission'] ??= [];
     for (const name of permissions) {
@@ -32,7 +33,11 @@ module.exports = function withHomePingTv(config) {
         manifest['uses-permission'].push({ $: { 'android:name': fullName } });
     }
     manifest['uses-feature'] ??= [];
-    for (const name of ['android.software.leanback', 'android.hardware.touchscreen']) {
+    for (const name of [
+      'android.software.leanback', 'android.hardware.touchscreen',
+      'android.hardware.camera', 'android.hardware.camera.any', 'android.hardware.camera.autofocus',
+      'android.hardware.microphone',
+    ]) {
       const existing = manifest['uses-feature'].find(item => item.$['android:name'] === name);
       if (existing) existing.$['android:required'] = 'false';
       else manifest['uses-feature'].push({ $: { 'android:name': name, 'android:required': 'false' } });

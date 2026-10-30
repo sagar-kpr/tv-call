@@ -54,7 +54,7 @@ function Verification({ user, onError }: { user: User; onError: (value: string) 
   };
   return <section className="card"><h2>Verify your email</h2>
     <p className="muted">We sent a verification link to <strong>{user.email}</strong>. Verify it before using HomePing.</p>
-    <button className="primary" disabled={busy} onClick={() => run(async () => { await reload(user); if (!user.emailVerified) throw new Error('Email is not verified yet.'); location.reload(); })}>I verified my email</button>
+    <button className="primary" disabled={busy} onClick={() => run(async () => { await reload(user); if (!user.emailVerified) throw new Error('Email is not verified yet.'); await user.getIdToken(true); location.reload(); })}>I verified my email</button>
     <button className="secondary" disabled={busy} onClick={() => run(() => sendEmailVerification(user))}>Resend verification email</button>
     <button className="link" onClick={() => signOut(getAuth())}>Use another account</button>
   </section>;
@@ -104,7 +104,7 @@ function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [clock, setClock] = useState(Date.now());
   const [activate, setActivate] = useState(!!activationCode), [settings, setSettings] = useState(false);
   const load = async () => setDevices(await api.devices());
-  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
+  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)); }, []);
   useEffect(() => {
     if (!call || isTerminal(call.status)) return;
     const timer = setInterval(async () => {
@@ -154,7 +154,7 @@ function App() {
   return <main><header><a className="brand" href="/"><span className="brand-icon">▣</span> HomePing</a>
     {user && <button className="link inline" onClick={() => signOut(getAuth())}>Sign out</button>}</header>
     <section className="intro"><p className="eyebrow">A LITTLE CLOSER TO HOME</p><h1>Your living room.<br/><em>One call away.</em></h1></section>
-    {!loaded || !config ? <section className="card">Connecting…</section> :
+    {!loaded || !config ? <section className="card">Opening HomePing… The server may take a minute to wake up.</section> :
       !user ? <AuthScreen config={config} onError={setError} /> :
       !user.emailVerified ? <Verification user={user} onError={setError} /> :
       <Caller api={api!} activationCode={activationCode} />}

@@ -3,7 +3,7 @@ import type { Call, TvDevice } from '../../../packages/client/src/index.js';
 import type { Store, Transaction } from './store.js';
 
 export class Fault extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 export type HumanPrincipal = { kind: 'human'; uid: string; email: string };
 export type TvPrincipal = { kind: 'tv'; uid: string; ownerUid: string; deviceId: string };
@@ -43,6 +43,18 @@ export class Calls {
     private now = Date.now,
     private userCode = generateCode,
   ) {}
+
+  async account(principal: HumanPrincipal) {
+    return this.store.run(async (tx) => {
+      const path = `users/${principal.uid}`;
+      const old = await tx.get<{ uid: string; email: string; createdAt: number; updatedAt: number }>(path);
+      if (old?.email === principal.email) return old;
+      const now = this.now();
+      const profile = { uid: principal.uid, email: principal.email, createdAt: old?.createdAt ?? now, updatedAt: now };
+      tx.set(path, profile);
+      return profile;
+    });
+  }
 
   async beginAuthorization(registration: TvRegistration, secret: string) {
     for (let attempt = 0; attempt < 8; attempt++) {

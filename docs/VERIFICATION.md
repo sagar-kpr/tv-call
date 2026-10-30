@@ -29,8 +29,9 @@ Date: 2026-10-30. Physical Android TV / Google TV verification is still pending.
   initialization. The overlay permission survives regeneration.
 - Inspected the built APK with Android SDK apkanalyzer: package
   `dev.tvcall.caller`, Android 8.0 minimum, both launch categories, both UIs
-  and TV services in DEX, ARM64/ARMv7 libraries, bundled JS, and no requested
-  camera or microphone permissions.
+  and TV services in DEX, ARM64/ARMv7 libraries, and bundled JS. Camera and
+  microphone permissions are now declared, with optional hardware; runtime
+  permission requests and media access await the media milestone.
 - No APK is tracked by Git. Native build directories and `artifacts/` outputs
   remain ignored.
 

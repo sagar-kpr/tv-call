@@ -72,6 +72,18 @@ test('ownership is enforced and another user receives 403', async () => {
   await assert.rejects(service.get(human('stranger'), call.id), { status: 403 });
 });
 
+test('verified account sync creates a Firestore profile once and preserves creation time', async () => {
+  const { service, store, advance } = await setup();
+  const first = await service.account(human());
+  const stored = await store.run(tx => tx.get('users/owner'));
+  assert.deepEqual(stored, first);
+  advance(10_000);
+  assert.deepEqual(await service.account(human()), first);
+  const changed = await service.account({ ...human(), email: 'updated@example.test' });
+  assert.equal(changed.createdAt, first.createdAt);
+  assert.equal(changed.updatedAt, first.updatedAt + 10_000);
+});
+
 test('a TV cannot be authorized under two accounts', async () => {
   const { service } = await setup();
   const second = await service.beginAuthorization(registration, 'y'.repeat(48));

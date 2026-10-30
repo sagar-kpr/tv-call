@@ -211,7 +211,9 @@ object Backend {
     }
     private fun http(url: String, body: JSONObject?, token: String?, method: String): JSONObject {
         val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 8_000; conn.readTimeout = 12_000; conn.requestMethod = method
+        conn.connectTimeout = 8_000
+        conn.readTimeout = if (url.endsWith("/api/config")) 90_000 else 12_000
+        conn.requestMethod = method
         conn.setRequestProperty("Content-Type", "application/json")
         if (token != null) conn.setRequestProperty("Authorization", "Bearer $token")
         try {

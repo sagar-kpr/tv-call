@@ -3,7 +3,9 @@
 HomePing links an Android TV / Google TV from any brand to a verified Firebase account and lets that
 account send an incoming-call invitation from the web or Android caller. The TV
 can show Accept/Reject while it is on the launcher. This milestone has no audio,
-video, WebRTC, webcam permission, or TV-to-phone calling.
+video, WebRTC, or TV-to-phone calling. Camera/microphone permissions are declared
+for future media work, with optional hardware features; the invitation flow does
+not request or use them. External storage permissions remain blocked.
 
 One Android APK contains a Kotlin TV receiver and a React Native/Expo phone
 caller. It detects the device on launch: television UI mode OR Leanback opens
@@ -38,6 +40,10 @@ user. The TV must then be authorized again.
 Legacy `devices`, `pairings`, and `callers` documents are left untouched
 but are no longer read. There is no safe automatic mapping from anonymous
 identities to account owners.
+
+Firebase Authentication stores the login account. On verified caller login,
+the backend separately creates the Firestore profile at `users/{uid}`.
+TV records are created under that account only after TV authorization.
 
 ## Firebase setup
 
@@ -144,6 +150,7 @@ Firebase for backend compute.
    Firebase Admin credentials. The backend reads
    `/etc/secrets/homeping-service-account.json`; never commit it or put it
    into the website/APK. The identity needs Auth, Firestore, and FCM access.
+   A path under `/home/...` or Downloads on your PC cannot be read by Render.
 4. After Render gives you its actual HTTPS URL, set
    `HOMEPING_BACKEND_URL=https://YOUR_ACTUAL_SERVICE.onrender.com` in your
    local `.env`. Both the web build and single phone/TV APK use this address.
@@ -161,6 +168,9 @@ take about a minute to start again. It is suitable for this prototype but
 cannot guarantee the ten-second invitation target after server idle.
 See [Render's free-service limits](https://render.com/docs/free).
 Firebase services remain subject to their own no-cost quotas.
+The phone/web and TV startup configuration requests allow 90 seconds for a
+cold start. Ordinary call requests retain their shorter deadline and are not
+automatically retried after a network timeout.
 
 ## TV settings and call behavior
 

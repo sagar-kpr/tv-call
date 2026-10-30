@@ -33,3 +33,17 @@ test('public HTTP URLs are rejected except localhost', () => {
   assert.throws(() => new Api('http://public.example', async () => 'x'), /HTTPS/);
   assert.doesNotThrow(() => new Api('http://localhost:3000', async () => 'x'));
 });
+
+test('aborted startup reports a readable retry message', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { throw new DOMException('aborted', 'AbortError'); };
+  try { await assert.rejects(Api.config('https://example.test'), /HomePing took too long to respond/); }
+  finally { globalThis.fetch = original; }
+});
+
+test('startup handles a sleeping-server HTML response without a JSON parsing error', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('<html>Starting service</html>', { status: 503 });
+  try { await assert.rejects(Api.config('https://example.test'), /HomePing is starting or temporarily unavailable/); }
+  finally { globalThis.fetch = original; }
+});

@@ -14,6 +14,7 @@ identity.
 | Method and path | Authentication | Body / result |
 | --- | --- | --- |
 | GET `/config` | Public | Firebase public configuration and optional Google OAuth client IDs |
+| POST `/account` | Verified human | Idempotent profile sync at `users/{uid}`; returns uid, email, and timestamps |
 | POST `/device-authorizations` | Bootstrap secret | `{registration, deviceSecret}` → code, authorization ID, ten-minute expiry, poll interval |
 | POST `/device-authorizations/poll` | Authorization ID + secret | Pending status or a one-time Firebase custom token |
 | POST `/device-authorizations/inspect` | Verified human | `{code}` → brand, model, expiry before approval |
@@ -82,6 +83,12 @@ state, expiry, registration preview, and approval/consumption timestamps.
 Admin SDK operations enforce writes. Firestore rules allow a verified human to
 read only their own user/device paths. TV principals and all clients are denied
 direct writes.
+
+An unverified email returns 403 with `code: EMAIL_NOT_VERIFIED`; the caller
+refreshes its ID token once after verification. Expired/revoked tokens return
+401. Firebase Admin credential, IAM, or verification-service failures return
+503 with `code: AUTH_SERVICE_UNAVAILABLE`, rather than blaming the user's
+token. Server logs include only the Firebase error code, never the ID token.
 
 Errors use `{error: string}`, with validation details where applicable:
 400 invalid input/code, 401 invalid or unverified authentication, 403 ownership

@@ -50,6 +50,7 @@ try {
       apiKey: 'test', projectId: 'test', androidAppId: 'test-app',
       messagingSenderId: '1', authDomain: 'test.firebaseapp.com',
     }});
+    if (path === '/api/account') return route.fulfill({ json: { uid: 'owner', email: 'owner@example.test' } });
     if (path === '/api/devices') return route.fulfill({ json: [{
       deviceId: '11111111-1111-4111-8111-111111111111', type: 'tv',
       name: 'Living room', room: 'Living room', manufacturer: 'Hisense',

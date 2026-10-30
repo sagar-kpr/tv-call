@@ -4,6 +4,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { Calls, Fault, type Principal, type TvPrincipal } from './service.js';
 import type { PublicConfig } from '../../../packages/client/src/index.js';
+import { authenticationFault } from './auth.js';
 
 const identifier = z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/);
 const deviceId = z.string().uuid();
@@ -62,7 +63,7 @@ export function appFor(
     const token = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
     if (!token) return next(new Fault(401, 'Authentication required'));
     try { res.locals.principal = await verify(token); next(); }
-    catch { next(new Fault(401, 'Invalid, expired, or unverified authentication')); }
+    catch (error) { next(authenticationFault(error)); }
   });
   const principal = (res: express.Response) => res.locals.principal as Principal;
   const human = (res: express.Response) => {
@@ -75,6 +76,7 @@ export function appFor(
     if (p.kind !== 'tv') throw new Fault(403, 'TV authorization required');
     return p as TvPrincipal;
   };
+  app.post('/api/account', async (_req, res) => res.json(await calls.account(human(res))));
   const approvalLimit = rateLimit({
     windowMs: 10 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
     keyGenerator: (_req, res) => (res.locals.principal as Principal).uid,
@@ -121,7 +123,9 @@ export function appFor(
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Invalid request', details: error.issues.map((i) => ({ path: i.path, message: i.message })) }); return;
     }
-    if (error instanceof Fault) { res.status(error.status).json({ error: error.message }); return; }
+    if (error instanceof Fault) {
+      res.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) }); return;
+    }
     if (error instanceof SyntaxError) { res.status(400).json({ error: 'Invalid JSON' }); return; }
     console.error('Request failed', error instanceof Error ? error.name : 'unknown');
     res.status(500).json({ error: 'Internal server error' });

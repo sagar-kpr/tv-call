@@ -1,10 +1,12 @@
-import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
+import { initializeApp, applicationDefault, cert, getApps } from 'firebase-admin/app';
+import { readFileSync } from 'node:fs';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
 import { Calls } from './service.js';
 import { FirestoreStore } from './store.js';
 import { appFor } from './http.js';
+import { principalFromToken } from './auth.js';
 
 export function createServer(webDirectory?: string) {
   const setting = (name: string) => process.env[name];
@@ -23,8 +25,23 @@ export function createServer(webDirectory?: string) {
     googleAndroidClientId: setting('GOOGLE_ANDROID_CLIENT_ID'),
     webUrl: setting('WEB_URL'),
   };
-  if (getApps().length === 0)
-    initializeApp({ credential: applicationDefault(), projectId: config.projectId });
+  if (getApps().length === 0) {
+    const file = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (process.env.RENDER === 'true' && !file)
+      throw new Error('Render requires GOOGLE_APPLICATION_CREDENTIALS pointing to the Firebase Admin secret file.');
+    let credential;
+    if (file) {
+      let key;
+      try { key = JSON.parse(readFileSync(file, 'utf8')); }
+      catch { throw new Error('Cannot read Firebase Admin secret file. Check GOOGLE_APPLICATION_CREDENTIALS and Render Secret Files.'); }
+      if (key.type !== 'service_account' || typeof key.private_key !== 'string' || typeof key.client_email !== 'string')
+        throw new Error('Firebase Admin requires a service-account JSON, not google-services.json or a web config.');
+      if (key.project_id !== config.projectId)
+        throw new Error('The Firebase Admin secret file belongs to a different FIREBASE_PROJECT_ID.');
+      credential = cert(key);
+    } else credential = applicationDefault();
+    initializeApp({ credential, projectId: config.projectId });
+  }
   const auth = getAuth();
   const calls = new Calls(
     new FirestoreStore(getFirestore()),
@@ -38,14 +55,6 @@ export function createServer(webDirectory?: string) {
     },
   );
   return appFor(calls, async (token) => {
-    const decoded = await auth.verifyIdToken(token, true);
-    if (decoded.role === 'tv') {
-      if (typeof decoded.ownerUid !== 'string' || typeof decoded.deviceId !== 'string')
-        throw new Error('Invalid TV claims');
-      return { kind: 'tv' as const, uid: decoded.uid, ownerUid: decoded.ownerUid, deviceId: decoded.deviceId };
-    }
-    if (decoded.email_verified !== true || typeof decoded.email !== 'string')
-      throw new Error('Verified email required');
-    return { kind: 'human' as const, uid: decoded.uid, email: decoded.email };
+    return principalFromToken(await auth.verifyIdToken(token, true));
   }, config, webDirectory);
 }

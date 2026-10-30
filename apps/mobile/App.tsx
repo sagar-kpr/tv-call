@@ -82,8 +82,9 @@ function GoogleLogin({ auth, config, busy, run }: {
 function Verification({ user, setError, onVerified }: { user: User; setError: (v: string) => void; onVerified: () => void }) {
   return <View style={styles.card}><Text style={styles.heading}>Verify your email</Text>
     <Text style={styles.muted}>Open the verification link sent to {user.email}, then continue.</Text>
-    <Button title="I verified my email" onPress={() => void reload(user).then(() => {
+    <Button title="I verified my email" onPress={() => void reload(user).then(async () => {
       if (!user.emailVerified) throw new Error('Email is not verified yet.');
+      await user.getIdToken(true);
       onVerified();
     }).catch(e => setError(e.message))} />
     <Button title="Resend verification email" onPress={() => void sendEmailVerification(user).catch(e => setError(e.message))} />
@@ -95,7 +96,7 @@ function Caller({ api, backend, user, setError }: { api: Api; backend: string; u
   const [devices, setDevices] = useState<TvDevice[]>([]), [call, setCall] = useState<Call | null>(null);
   const [busy, setBusy] = useState(false), [settings, setSettings] = useState(false), [clock, setClock] = useState(Date.now());
   const load = async () => setDevices(await api.devices());
-  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
+  useEffect(() => { void api.account().then(load).catch(e => setError(e.message)); }, []);
   useEffect(() => {
     if (!call || isTerminal(call.status)) return;
     const timer = setInterval(() => {
@@ -163,7 +164,7 @@ export default function App() {
     </Pressable><Text style={styles.eyebrow}>A LITTLE CLOSER TO HOME</Text>
     <Text style={styles.title}>Your living room.{ '\n' }One call away.</Text>
     {!config || !auth ? <View style={styles.card}><Text style={styles.heading}>{busy ? 'Opening HomePing…' : 'HomePing unavailable'}</Text>
-      <Text style={styles.muted}>{busy ? 'Connecting securely.' : 'Please check your connection and try again.'}</Text>
+      <Text style={styles.muted}>{busy ? 'The server may take a minute to wake up.' : 'Please check your connection and try again.'}</Text>
       {!busy && <Button title="Try again" onPress={() => void connect()} />}</View> :
       !loaded ? <Text>Loading…</Text> : !user ? <Login auth={auth} config={config} setError={setError} /> :
       !user.emailVerified ? <Verification user={user} setError={setError} onVerified={() => setAuthRevision(value => value + 1)} /> :

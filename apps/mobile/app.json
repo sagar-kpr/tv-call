@@ -8,9 +8,11 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "dev.tvcall.caller",
-      "blockedPermissions": [
+      "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE"
       ]

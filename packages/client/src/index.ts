@@ -26,13 +26,20 @@ export type PublicConfig = {
   authDomain?: string; googleWebClientId?: string; googleAndroidClientId?: string;
   webUrl?: string;
 };
-async function jsonFetch(url: string, options: RequestInit = {}) {
+async function jsonFetch(url: string, options: RequestInit = {}, timeoutMs = 12_000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const text = await response.text();
-    return { response, data: text ? JSON.parse(text) : {} };
+    let data;
+    try { data = text ? JSON.parse(text) : {}; }
+    catch { throw new Error('HomePing is starting or temporarily unavailable. Please try again.'); }
+    return { response, data };
+  } catch (error) {
+    if (controller.signal.aborted || (error as { name?: string }).name === 'AbortError')
+      throw new Error('HomePing took too long to respond. Please try again.');
+    throw error;
   } finally { clearTimeout(timeout); }
 }
 export class Api {
@@ -44,7 +51,9 @@ export class Api {
   }
   static async config(base: string): Promise<PublicConfig> {
     const normalized = base.trim().replace(/\/$/, '');
-    const { response, data } = await jsonFetch(`${normalized}/api/config`);
+    // Render Free may need more than 50 seconds to start. Only startup gets
+    // this longer deadline; call mutations retain their short timeout.
+    const { response, data } = await jsonFetch(`${normalized}/api/config`, {}, 90_000);
     if (!response.ok) throw new Error('Backend configuration unavailable');
     return data as PublicConfig;
   }
@@ -55,11 +64,12 @@ export class Api {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     let result = await send();
-    if (result.response.status === 401) result = await send(true);
+    if (result.response.status === 401 || result.data.code === 'EMAIL_NOT_VERIFIED') result = await send(true);
     if (!result.response.ok) throw new Error(result.data.error ?? `Request failed (${result.response.status})`);
     return result.data as T;
   }
   devices() { return this.request<TvDevice[]>('/devices'); }
+  account() { return this.request<{ uid: string; email: string }>('/account', {}); }
   updateDevice(deviceId: string, changes: { name?: string; room?: string | null }) {
     return this.request<TvDevice>(`/devices/${deviceId}`, changes, 'PATCH');
   }
