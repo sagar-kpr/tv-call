@@ -74,3 +74,23 @@ npx --yes firebase-tools@13.35.1 emulators:exec \
 No physical TV was attached during this implementation. The incoming-call
 milestone remains **UNVERIFIED ON HARDWARE** until
 [HARDWARE_TEST.md](HARDWARE_TEST.md) is completed.
+
+## Render and Firebase deployment — 2026-10-30
+
+- Render API: `https://tv-call.onrender.com`. Public `/health` and
+  `/api/config` return 200; configuration reports project
+  `home-ping-7f1ef`. CORS allows the Firebase web origin.
+- Firebase website and Firestore rules deployed successfully to
+  `https://home-ping-7f1ef.web.app`. A real headless browser loads the sign-in
+  screen without page errors and uses the Render API.
+- Rebuilt `artifacts/homeping.apk` with the verified Render address in native
+  metadata, read by both the TV receiver and phone caller. Neither app asks the
+  user to enter a server URL. Inspected the actual APK manifest to verify this.
+- Typecheck, backend/web builds, browser smoke test, and eight native mode tests
+  pass. Normal Node tests now have 13 passes and two emulator-only skips; the
+  additional tests cover public endpoint embedding and URL validation.
+- Registered unified Firebase Android app `dev.tvcall.caller`, Firebase app ID
+  `1:582530719860:android:09f48fe47dd5276c3c3121`. Render still reports the old
+  TV-only Firebase app ID; its environment setting must be changed and redeployed.
+- Login completion, authenticated Firestore operations, TV approval, and live
+  FCM delivery have not been verified by these public endpoint/browser checks.
