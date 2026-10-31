@@ -401,3 +401,65 @@ build artifact. Login/settings were preserved. Existing TV activities were left 
 front during installation. The user must still verify the real double-OK flow and
 confirm the perceived ringtone level on each firmware. No backend/web deploy was
 needed for these native changes.
+
+### TV call screen spacing — 2026-10-31
+
+The TV call header now places the HomePing mark beside compact, borderless status
+text. Neutral initial focus remains for acceptance-press protection, with the
+platform's default status focus outline disabled. The centered controls use
+160dp-wide buttons, 16dp gaps, a distinct red End call button and 24dp bottom
+inset. The video stage has separate header/control spacing and a density-aware
+self-preview. Phone call layout and call behavior are unchanged.
+
+Release build and all 37 native tests passed. Visual checks still require an
+actual call: confirm the status has no stretched border, buttons are separated,
+remote focus is visible on each button and two quick acceptance presses cannot
+end the call.
+
+Installed with replacement on 192.168.1.2 and 192.168.1.6. Both installed APK
+hashes match `artifacts/homeping.apk`; existing login/settings are retained.
+
+### Ringtone recovery during background media changes — 2026-10-31
+
+Previously an audio-focus loss permanently released the ringtone player even
+though the invitation remained ringing. IncomingRinger now requests temporary
+exclusive audio focus rather than allowing background media to duck alongside it.
+Focus loss pauses playback and schedules a retry after one second while the
+invitation is active. Focus gain resumes the prepared looping player. Initial
+focus denial also retries. Ringtone stop cancels pending recovery, releases the
+player/focus and preserves the existing 20% volume-floor restoration policy.
+Late callbacks from an old focus request are ignored.
+
+Regression tests cover repeated media interruptions, denied focus, duplicate
+loss callbacks, gain cancelling recovery, closure blocking late callbacks and
+re-enabling ringtone. Hardware acceptance still requires starting a YouTube
+next video/ad while an invitation rings: the prompt must stay visible and sound
+must resume if interrupted. Repeat across multiple track changes, then check
+accept/reject/cancel/timeout stop ringing without a late restart. Android audio
+focus remains controlled by the OS; exclusive focus is a request, not a guarantee
+that every TV firmware or third-party player will honor it.
+
+### Accepting a call during ambient/screensaver mode — 2026-10-31
+
+TV acceptance now sends a bounded three-second display wake pulse before opening
+CallActivity from an overlay or foreground prompt (also used for opted-in
+auto-accept). CallActivity additionally requests show-when-locked/turn-screen-on
+on supported Android versions, with window flags on API 26, and retains its
+existing keep-screen-on flag. The notification activity PendingIntent path gets
+the same activity preparation. The unified Expo plugin and standalone manifest
+both declare the normal WAKE_LOCK permission. No ADB, hidden DreamManager APIs
+or indefinite wake lock is used by routine calls. Phone call behavior is unchanged.
+
+Hardware check: let ambient mode start naturally, call the TV, press Accept once
+and confirm the screensaver exits, the call screen stays visible, media connects
+and End returns Home. Repeat rejection/cancellation (neither should open a call),
+notification acceptance and optional auto-accept. The wake pulse/flags are a fix
+candidate until this is verified on each TV's firmware. See Android's
+[activity display APIs](https://developer.android.com/reference/android/app/Activity#setTurnScreenOn(boolean))
+and [wake flags](https://developer.android.com/reference/android/os/PowerManager#ACQUIRE_CAUSES_WAKEUP).
+
+The combined release build passed all 42 native tests and was installed with
+replacement on both 192.168.1.2 and 192.168.1.6. Installed APK hashes match the
+artifact. Before installation .2 was in YouTube and .6 was in DreamActivity;
+no active call was interrupted. This verifies delivery, not real-call behavior:
+the YouTube track-change and screensaver-acceptance checks above remain pending.

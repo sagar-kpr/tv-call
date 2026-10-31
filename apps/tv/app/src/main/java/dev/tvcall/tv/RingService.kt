@@ -109,7 +109,7 @@ class RingService : Service() {
             }
             main.post {
                 if (!closed && accepted) {
-                    try { startActivity(Alerts.activity(this, CallActivity::class.java, callId, "accept")); DebugEvents.add(this, "Call auto-accepted after 60 seconds") }
+                    try { TvCallScreen.open(this, callId); DebugEvents.add(this, "Call auto-accepted after 60 seconds") }
                     catch (_: Exception) { DebugEvents.add(this, "Automatic call launch blocked by firmware") }
                 }
                 close()
@@ -121,7 +121,7 @@ class RingService : Service() {
         if (System.currentTimeMillis() >= deadline) { close(); return }
         val prompt = TvUi.incoming(this, accept = {
             if (System.currentTimeMillis() >= deadline) { close(); return@incoming }
-            try { startActivity(Alerts.activity(this, CallActivity::class.java, callId, "accept")) }
+            try { TvCallScreen.open(this, callId) }
             catch (e: Exception) { Log.e("HomePing", "Overlay activity launch blocked", e) }
             close()
         }, reject = {

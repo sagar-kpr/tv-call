@@ -76,12 +76,30 @@ class CallActivity : Activity() {
         super.onCreate(savedInstanceState)
         id = intent.getStringExtra("callId") ?: run { finish(); return }
         api = CallApi(this, intent.getStringExtra("callerToken"), intent.getStringExtra("callerRefresh"), intent.getStringExtra("apiKey"))
+        if (!api.caller) TvCallScreen.prepare(this)
         for (key in listOf("callerToken", "callerRefresh", "apiKey")) intent.removeExtra(key)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_SECURE)
-        val layout = (if (api.caller) Ui.column(this) else TvUi.screen(this)).apply { setPadding(24, 12, 24, 12) }
-        status = if (api.caller) Ui.text(this, "Connecting your call…", 18f) else TvUi.text(this, "Connecting your call…", 18f); layout.addView(status)
+        val layout = if (api.caller) Ui.column(this).apply { setPadding(24, 12, 24, 12) }
+            else TvUi.screen(this).apply { setPadding(TvUi.dp(context, 32), TvUi.dp(context, 20), TvUi.dp(context, 32), TvUi.dp(context, 24)) }
+        status = if (api.caller) Ui.text(this, "Connecting your call…", 18f) else TvUi.text(this, "Connecting your call…", 16f)
         connectionLoader = android.widget.ProgressBar(this).apply { indeterminateTintList = android.content.res.ColorStateList.valueOf(if (api.caller) android.graphics.Color.rgb(36, 78, 58) else TvUi.accent) }
-        layout.addView(connectionLoader, LinearLayout.LayoutParams(TvUi.dp(this, 24), TvUi.dp(this, 24)))
+        if (api.caller) {
+            layout.addView(status)
+            layout.addView(connectionLoader, LinearLayout.LayoutParams(TvUi.dp(this, 24), TvUi.dp(this, 24)))
+        } else {
+            val header = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+            header.addView(TvUi.brand(this))
+            header.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            header.addView(connectionLoader, LinearLayout.LayoutParams(TvUi.dp(this, 20), TvUi.dp(this, 20)).apply { marginEnd = TvUi.dp(this@CallActivity, 12) })
+            status.apply {
+                maxWidth = TvUi.dp(this@CallActivity, 480)
+                gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+                // Neutral initial focus absorbs acceptance presses without drawing a full-width focus box.
+                isFocusable = true; isFocusableInTouchMode = true; defaultFocusHighlightEnabled = false
+            }
+            header.addView(status, LinearLayout.LayoutParams(-2, -2))
+            layout.addView(header, LinearLayout.LayoutParams(-1, -2))
+        }
         tvCompatibility = !api.caller && Backend.tvAudioCompatibility(this)
         volumeControlStream = if (tvCompatibility) AudioManager.STREAM_MUSIC else AudioManager.STREAM_VOICE_CALL
         audioStatus = Ui.text(this, "Audio: waiting for connection", 14f); if (api.caller) layout.addView(audioStatus)
@@ -89,25 +107,28 @@ class CallActivity : Activity() {
         remote = SurfaceViewRenderer(this).apply { contentDescription = "Remote video"; isFocusable = false }
         local = SurfaceViewRenderer(this).apply { contentDescription = "Your camera"; isFocusable = false; setZOrderMediaOverlay(true) }
         stage.addView(remote, android.widget.FrameLayout.LayoutParams(-1, -1))
-        remotePlaceholder = Ui.text(this, if (api.caller) "Waiting for TV video…" else "Waiting for caller video…", 16f).apply { gravity = android.view.Gravity.CENTER }
+        remotePlaceholder = (if (api.caller) Ui.text(this, "Waiting for TV video…", 16f) else TvUi.text(this, "Waiting for caller video…", 18f, true)).apply { gravity = android.view.Gravity.CENTER }
         stage.addView(remotePlaceholder, android.widget.FrameLayout.LayoutParams(-1, -1))
-        stage.addView(local, android.widget.FrameLayout.LayoutParams(240, 135, android.view.Gravity.BOTTOM or android.view.Gravity.END))
-        layout.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun control(label: String, click: () -> Unit): Button = if (api.caller) Ui.button(this, label, click) else TvUi.button(this, label, click = click)
+        stage.addView(local, android.widget.FrameLayout.LayoutParams(if (api.caller) 240 else TvUi.dp(this, 176), if (api.caller) 135 else TvUi.dp(this, 99), android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
+            if (!api.caller) { bottomMargin = TvUi.dp(this@CallActivity, 12); marginEnd = TvUi.dp(this@CallActivity, 12) }
+        })
+        layout.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            if (!api.caller) { topMargin = TvUi.dp(this@CallActivity, 16); bottomMargin = TvUi.dp(this@CallActivity, 20) }
+        })
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER }
+        fun control(label: String, danger: Boolean = false, click: () -> Unit): Button = if (api.caller) Ui.button(this, label, click) else TvUi.button(this, label, danger = danger, click = click)
         mic = control( "Enable mic") { toggle(false) }
         camera = control( "Enable camera") { toggle(true) }
         switch = control( "Switch camera") { (localTrack as? LocalVideoTrack)?.switchCamera() }
-        end = control( "End call") { requestEndCall() }
+        end = control( "End call", danger = true) { requestEndCall() }
         val audio = Ui.button(this, "Audio info") { showAudioInfo() }
         for (button in if (api.caller) listOf(mic, camera, switch, audio, end) else listOf(mic, camera, switch, end))
-            controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
-        layout.addView(controls); setContentView(layout)
+            controls.addView(button, if (api.caller) LinearLayout.LayoutParams(0, -2, 1f) else LinearLayout.LayoutParams(TvUi.dp(this, 160), TvUi.dp(this, 56)).apply {
+                marginStart = TvUi.dp(this@CallActivity, 8); marginEnd = TvUi.dp(this@CallActivity, 8)
+            })
+        layout.addView(controls, LinearLayout.LayoutParams(-1, -2)); setContentView(layout)
         if (api.caller) end.requestFocus() else {
             status.isFocusable = true; status.isFocusableInTouchMode = true
-            status.setOnFocusChangeListener { _, focused ->
-                status.background = if (focused) TvUi.shape(this, android.graphics.Color.rgb(23, 43, 35), 10, TvUi.accent) else null
-            }
             status.requestFocus()
         }
         controlsEnabled(false)

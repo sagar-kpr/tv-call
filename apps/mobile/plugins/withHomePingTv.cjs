@@ -24,7 +24,7 @@ module.exports = function withHomePingTv(config) {
     const permissions = [
       'INTERNET', 'ACCESS_NETWORK_STATE', 'POST_NOTIFICATIONS', 'USE_FULL_SCREEN_INTENT',
       'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC', 'SYSTEM_ALERT_WINDOW', 'RECEIVE_BOOT_COMPLETED',
-      'CAMERA', 'RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS',
+      'CAMERA', 'RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS', 'WAKE_LOCK',
     ];
     manifest['uses-permission'] ??= [];
     for (const name of permissions) {

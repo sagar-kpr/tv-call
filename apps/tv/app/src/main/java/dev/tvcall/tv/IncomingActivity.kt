@@ -26,7 +26,7 @@ class IncomingActivity : Activity() {
         id = intent.getStringExtra("callId") ?: run { finish(); return }
         val status = TvUi.text(this, "Checking invitation…", 14f, true)
         val prompt = TvUi.incoming(this, accept = {
-            startActivity(Alerts.activity(this, CallActivity::class.java, id, "accept")); finish()
+            TvCallScreen.open(this, id); finish()
         }, reject = {
             Backend.io.execute {
                 try { Backend.action(this, id, "decline"); runOnUiThread { dismiss(); finish() } }

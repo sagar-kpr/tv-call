@@ -17,6 +17,23 @@ internal class IncomingRinger(private val context: Context) {
     private var player: MediaPlayer? = null
     private var focus: AudioFocusRequest? = null
     private var ringVolume: RingVolume? = null
+    private val retryFocus = Runnable { focusController.retry() }
+    private val focusController: RingtoneFocusController = RingtoneFocusController(
+        request = { runCatching { focus?.let { audio.requestAudioFocus(it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED } ?: false }.getOrDefault(false) },
+        resume = {
+            try {
+                if (!audio.isVolumeFixed && ringVolume == null) {
+                    val boost = RingVolume(audio.getStreamVolume(AudioManager.STREAM_MUSIC), audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
+                    ringVolume = boost
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, boost.raised, 0)
+                }
+                player?.setVolume(1f, 1f); player?.start()
+            } catch (_: Exception) { stop(); DebugEvents.add(context, "Ringtone could not resume") }
+        },
+        pause = { runCatching { player?.let { if (it.isPlaying) it.pause() } } },
+        schedule = { main.postDelayed(retryFocus, 1_000) },
+        cancel = { main.removeCallbacks(retryFocus) }
+    )
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
@@ -26,24 +43,18 @@ internal class IncomingRinger(private val context: Context) {
         try {
             val resource = context.resources.getIdentifier("homeping_ring", "raw", context.packageName)
             check(resource != 0) { "Ringtone resource missing" }
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            lateinit var request: AudioFocusRequest
+            request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                 .setAudioAttributes(attributes)
+                .setWillPauseWhenDucked(true)
                 .setOnAudioFocusChangeListener({ change ->
-                    when (change) {
-                        AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> stop()
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.setVolume(.2f, .2f)
-                        AudioManager.AUDIOFOCUS_GAIN -> player?.setVolume(1f, 1f)
+                    if (focus === request) when (change) {
+                        AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> focusController.lost()
+                        AudioManager.AUDIOFOCUS_GAIN -> focusController.gained()
                     }
                 }, main).build()
             focus = request
-            if (audio.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                stop(); DebugEvents.add(context, "Ringtone unavailable: audio focus not granted"); return
-            }
-            if (!audio.isVolumeFixed) {
-                val boost = RingVolume(audio.getStreamVolume(AudioManager.STREAM_MUSIC), audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
-                ringVolume = boost
-                audio.setStreamVolume(AudioManager.STREAM_MUSIC, boost.raised, 0)
-            }
             val candidate = MediaPlayer(); player = candidate
             candidate.setAudioAttributes(attributes)
             candidate.setDataSource(context, Uri.parse("android.resource://${context.packageName}/$resource"))
@@ -56,8 +67,8 @@ internal class IncomingRinger(private val context: Context) {
             candidate.setOnPreparedListener {
                 // Release/cancellation can happen while prepareAsync is pending.
                 if (player === candidate) {
-                    try { candidate.start(); DebugEvents.add(context, "Incoming ringtone started") }
-                    catch (_: Exception) { stop(); DebugEvents.add(context, "Ringtone could not start") }
+                    focusController.start()
+                    DebugEvents.add(context, "Incoming ringtone prepared; requesting exclusive audio focus")
                 }
             }
             candidate.prepareAsync()
@@ -66,6 +77,7 @@ internal class IncomingRinger(private val context: Context) {
         }
     }
     fun stop() {
+        focusController.close()
         val old = player; player = null
         runCatching { old?.setOnPreparedListener(null); old?.setOnErrorListener(null); old?.release() }
         val request = focus; focus = null
