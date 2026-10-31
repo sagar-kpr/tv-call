@@ -96,8 +96,12 @@ export const emptyDeviceMessage = (devices: TvDevice[]) => devices.length === 0 
 export function lastSeenLabel(lastSeen: number, now = Date.now()) {
   const minutes = Math.max(0, Math.floor((now - lastSeen) / 60_000));
   if (minutes < 1) return 'last seen less than a minute ago';
-  if (minutes === 1) return 'last seen 1 minute ago';
-  return `last seen ${minutes} minutes ago`;
+  const [value, unit] = minutes < 60 ? [minutes, 'minute']
+    : minutes < 24 * 60 ? [Math.floor(minutes / 60), 'hour']
+    : minutes < 30 * 24 * 60 ? [Math.floor(minutes / (24 * 60)), 'day']
+    : minutes < 365 * 24 * 60 ? [Math.floor(minutes / (30 * 24 * 60)), 'month']
+    : [Math.floor(minutes / (365 * 24 * 60)), 'year'];
+  return `last seen ${value} ${unit}${value === 1 ? '' : 's'} ago`;
 }
 
 /** One automatic launch per accepted call, deferred while the caller is backgrounded. */

@@ -29,6 +29,15 @@ test('No TV detected and last-seen presentation are stable', () => {
   assert.equal(lastSeenLabel(1_000_000, 1_180_000), 'last seen 3 minutes ago');
 });
 
+test('last seen uses hours, days, months and years at their boundaries', () => {
+  for (const [minutes, expected] of [
+    [59, '59 minutes'], [60, '1 hour'], [450, '7 hours'], [24 * 60 - 1, '23 hours'],
+    [24 * 60, '1 day'], [2 * 24 * 60, '2 days'], [30 * 24 * 60, '1 month'],
+    [60 * 24 * 60, '2 months'], [365 * 24 * 60, '1 year'], [730 * 24 * 60, '2 years'],
+  ] as const) assert.equal(lastSeenLabel(0, minutes * 60_000), `last seen ${expected} ago`);
+  assert.equal(lastSeenLabel(1000, 0), 'last seen less than a minute ago');
+});
+
 test('public HTTP URLs are rejected except localhost', () => {
   assert.throws(() => new Api('http://public.example', async () => 'x'), /HTTPS/);
   assert.doesNotThrow(() => new Api('http://localhost:3000', async () => 'x'));

@@ -463,3 +463,19 @@ replacement on both 192.168.1.2 and 192.168.1.6. Installed APK hashes match the
 artifact. Before installation .2 was in YouTube and .6 was in DreamActivity;
 no active call was interrupted. This verifies delivery, not real-call behavior:
 the YouTube track-change and screensaver-acceptance checks above remain pending.
+
+The user subsequently reported the updated TV behavior is working well. This is
+user-reported confirmation; no additional instrumented media/focus trace was taken.
+
+### Caller last-seen units — 2026-10-31
+
+Web and Android callers now share relative-time labels: minutes below an hour,
+hours below a day, days below 30 days, approximate 30-day months below a year,
+then years. Boundary tests include 450 minutes displaying 7 hours, singular/plural
+forms and future clock skew. This is a last-registration timestamp, not presence.
+
+Permission inspection found the native CallActivity already checks each Android
+permission and requests only missing grants. It does not revoke permissions on
+exit. Android one-time grants and browser Ask settings can still cause later
+prompts; persistent consent is controlled by the device/browser, not local app
+storage. Device/browser identification is needed to diagnose a repeated prompt.
