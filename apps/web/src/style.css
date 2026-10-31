@@ -285,3 +285,5 @@ footer {
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } .busy-backdrop { backdrop-filter: none; } }
 
 .brand-mark { display: block; flex-shrink: 0; border-radius: 10px; }
+
+.remote-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: #9fb7ab; pointer-events: none; }

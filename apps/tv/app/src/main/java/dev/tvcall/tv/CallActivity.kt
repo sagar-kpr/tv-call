@@ -48,6 +48,7 @@ class CallActivity : Activity() {
     private var localAudio: LocalAudioTrack? = null
     private var remoteAudio: RemoteAudioTrack? = null
     private lateinit var audioStatus: TextView
+    private lateinit var remotePlaceholder: TextView
     private lateinit var connectionLoader: android.widget.ProgressBar
     private var tvCompatibility = false
     private var room: Room? = null
@@ -79,6 +80,8 @@ class CallActivity : Activity() {
         remote = SurfaceViewRenderer(this).apply { contentDescription = "Remote video"; isFocusable = false }
         local = SurfaceViewRenderer(this).apply { contentDescription = "Your camera"; isFocusable = false; setZOrderMediaOverlay(true) }
         stage.addView(remote, android.widget.FrameLayout.LayoutParams(-1, -1))
+        remotePlaceholder = Ui.text(this, if (api.caller) "Waiting for TV video…" else "Waiting for caller video…", 16f).apply { gravity = android.view.Gravity.CENTER }
+        stage.addView(remotePlaceholder, android.widget.FrameLayout.LayoutParams(-1, -1))
         stage.addView(local, android.widget.FrameLayout.LayoutParams(240, 135, android.view.Gravity.BOTTOM or android.view.Gravity.END))
         layout.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
         val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -99,6 +102,7 @@ class CallActivity : Activity() {
                 DebugEvents.add(this@CallActivity, "Call ${id.take(8)} accepted; starting media")
                 monitor()
                 val permissions = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+                    .filter { it != Manifest.permission.CAMERA || cameraAvailable() }
                     .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
                 if (permissions.isEmpty()) connect() else requestPermissions(permissions.toTypedArray(), 201)
             } catch (error: Exception) { if (error is CancellationException) throw error; connectionLoader.visibility = android.view.View.GONE; status.text = error.message ?: "Could not start call" }
@@ -135,7 +139,7 @@ class CallActivity : Activity() {
                             else -> {}
                         }
                         is RoomEvent.TrackUnsubscribed -> {
-                            if (event.track === remoteTrack) { remoteTrack?.removeRenderer(remote); remoteTrack = null; remote.clearImage() }
+                            if (event.track === remoteTrack) { remoteTrack?.removeRenderer(remote); remoteTrack = null; remote.clearImage(); remotePlaceholder.visibility = View.VISIBLE; remotePlaceholder.text = if (api.caller) "TV camera is off or not connected" else "Caller camera is off" }
                             if (event.track === remoteAudio) { remoteAudio?.removeSink(incomingSink); remoteAudio = null }
                         }
                         is RoomEvent.Reconnecting -> status.text = "Connection lost. Reconnecting…"
@@ -151,11 +155,11 @@ class CallActivity : Activity() {
                     try { micOn = active.localParticipant.setMicrophoneEnabled(true); if (!micOn) notices.add("Microphone unavailable") }
                     catch (error: Exception) { if (error is CancellationException) throw error; notices.add("Microphone unavailable") }
                 } else notices.add("Microphone permission denied")
-                if (hasPermission(Manifest.permission.CAMERA)) {
-                    try {
-                        cameraOn = active.localParticipant.setCameraEnabled(true)
-                        if (cameraOn) attachLocal() else notices.add("No compatible camera available")
-                    } catch (error: Exception) { if (error is CancellationException) throw error; notices.add("No compatible camera available") }
+                val cameraPresent = cameraAvailable()
+                if (!cameraPresent) notices.add("No camera connected")
+                else if (hasPermission(Manifest.permission.CAMERA)) {
+                    cameraOn = OptionalCamera.enable(cameraPresent) { active.localParticipant.setCameraEnabled(true) }
+                    if (cameraOn) attachLocal() else notices.add("No camera connected")
                 } else notices.add("Camera permission denied")
                 attachLocalAudio()
                 active.setSpeakerMute(false)
@@ -166,6 +170,7 @@ class CallActivity : Activity() {
                 refreshLabels()
                 active.remoteParticipants.values.firstOrNull()?.getTrackPublication(Track.Source.CAMERA)?.track
                     ?.let { if (it is VideoTrack) attachRemote(it) }
+                if (remoteTrack == null) remotePlaceholder.text = if (api.caller) "TV camera is off or not connected" else "Waiting for caller video…"
                 status.text = if (notices.isEmpty()) "Connected" else "Connected · ${notices.joinToString(" · ")}"
                 DebugEvents.add(this@CallActivity, "Media connected; camera=$cameraOn microphone=$micOn")
             } catch (error: Exception) {
@@ -206,13 +211,17 @@ class CallActivity : Activity() {
     }
     private fun attachRemote(track: VideoTrack) {
         if (remoteTrack === track) return
-        remoteTrack?.removeRenderer(remote); remoteTrack = track; track.addRenderer(remote)
+        remoteTrack?.removeRenderer(remote); remoteTrack = track; track.addRenderer(remote); remotePlaceholder.visibility = View.GONE
     }
     private fun attachLocal() {
         localTrack?.removeRenderer(local)
         localTrack = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? VideoTrack
         localTrack?.addRenderer(local)
     }
+    @Suppress("DEPRECATION")
+    private fun cameraAvailable(): Boolean =
+        runCatching { getSystemService(CameraManager::class.java).cameraIdList.isNotEmpty() }.getOrDefault(false) ||
+        runCatching { android.hardware.Camera.getNumberOfCameras() > 0 }.getOrDefault(false)
     private fun refreshLabels() { mic.text = if (micOn) "Mute" else "Enable mic"; camera.text = if (cameraOn) "Camera off" else "Enable camera" }
     private fun toggle(video: Boolean) {
         if (!connected || ending) return
@@ -224,8 +233,11 @@ class CallActivity : Activity() {
             try {
                 val participant = room?.localParticipant ?: return@launch
                 if (video) {
-                    if (participant.setCameraEnabled(!cameraOn)) { cameraOn = !cameraOn; if (cameraOn) attachLocal() else local.clearImage() }
-                    else status.text = "Camera unavailable"
+                    if (cameraOn) { participant.setCameraEnabled(false); cameraOn = false; local.clearImage() }
+                    else {
+                        cameraOn = OptionalCamera.enable(cameraAvailable()) { participant.setCameraEnabled(true) }
+                        if (cameraOn) attachLocal() else status.text = "No camera connected · Call stays connected"
+                    }
                 } else if (participant.setMicrophoneEnabled(!micOn)) { micOn = !micOn; attachLocalAudio() }
                 refreshLabels()
             } catch (error: Exception) { if (error is CancellationException) throw error; status.text = "Could not change camera/microphone" }

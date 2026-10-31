@@ -10,6 +10,7 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
   const [mic, setMic] = useState(false), [camera, setCamera] = useState(false);
   const [message, setMessage] = useState('Joining your call…');
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [remoteVideo, setRemoteVideo] = useState(false);
   const disposed = useRef(false);
   function clear() {
     const room = roomRef.current; roomRef.current = null;
@@ -43,6 +44,7 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
     const room = new Room({ adaptiveStream: true, dynacast: true }); roomRef.current = room;
     const attach = (track: RemoteTrack) => {
       if (track.kind === Track.Kind.Video) {
+        setRemoteVideo(true);
         remote.current?.querySelectorAll('video').forEach(element => element.remove());
       }
       const element = track.attach();
@@ -50,7 +52,10 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
       remote.current?.append(element);
     };
     room.on(RoomEvent.TrackSubscribed, attach);
-    room.on(RoomEvent.TrackUnsubscribed, track => track.detach().forEach(element => element.remove()));
+    room.on(RoomEvent.TrackUnsubscribed, track => {
+      track.detach().forEach(element => element.remove());
+      if (track.kind === Track.Kind.Video) setRemoteVideo(false);
+    });
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => setAudioBlocked(!room.canPlaybackAudio));
     room.on(RoomEvent.Reconnecting, () => setMessage('Connection lost. Reconnecting…'));
     room.on(RoomEvent.Reconnected, () => setMessage('Connected'));
@@ -99,7 +104,7 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
   }
   return createPortal(<div className="video-call" role="dialog" aria-modal="true" aria-label="HomePing video call">
     <p className="video-status" role="status">{joining && <span className="spinner" aria-hidden="true" />} {message}</p>
-    <div className="video-stage"><div ref={remote} className="remote-media" /><div ref={local} className="local-media" /></div>
+    <div className="video-stage">{!remoteVideo && <div className="remote-placeholder" role="status">{connected ? 'TV camera is off or not connected' : 'Waiting for TV video…'}</div>}<div ref={remote} className="remote-media" /><div ref={local} className="local-media" /></div>
     <div className="row-actions call-controls">
       {!connected && <button className="primary" disabled={joining} onClick={() => void join()}>{joining ? 'Connecting…' : 'Retry connection'}</button>}
       {connected && <><button className="secondary" onClick={() => void toggle('mic')}>{mic ? 'Mute' : 'Enable microphone'}</button>

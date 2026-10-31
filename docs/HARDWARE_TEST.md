@@ -283,3 +283,35 @@ to revert the recent phone layout changes before phone logs could be collected.
 Restored the previous native phone layout (video above the separate controls row
 and audio information). Automatic joining, branding, loaders, and the larger web
 view are preserved. The cause of the phone white screen is not yet verified.
+
+### TV without a webcam / built-in microphone — 2026-10-31
+
+On the second TV (ADB endpoint 192.168.1.4), AndroidRuntime recorded a fatal
+`kotlin.NotImplementedError` in LiveKit 2.29.2 camera-track creation when no webcam
+was attached. The process exited, leaving the caller without remote media.
+The app now checks Camera2/legacy camera availability before capture and isolates
+the SDK's no-camera error. Camera absence does not disconnect receiving media.
+The camera toggle uses the same protection. Phone/web show a remote-camera
+placeholder instead of an unexplained empty video area. Missing cameras do not
+trigger a camera permission request. Fatal camera errors are covered by five
+native regression tests, including cancellation propagation; 27 native tests pass.
+Live browser media and responsive-layout tests still pass; these do not test the
+native TV's camera absence or microphone hardware.
+
+The second TV's audio policy exposes an available Built-In Mic input. Audio mute
+state reports false, and the primary user's RECORD_AUDIO permission is granted.
+HomePing's existing TV compatibility mode uses MediaRecorder.AudioSource.MIC
+with media output, allowing Android's built-in microphone route. No firmware- or
+IP-specific route is hard-coded. Verify with a real accepted call that the TV stays
+open without a webcam, phone video/audio reaches TV, and speech near the TV reaches
+the phone. An advertised built-in mic is not proof of audible capture; physical
+mic switches, firmware restrictions, and actual recording must still be checked.
+
+Post-install live observation on the second TV: accepted call stayed in CallActivity;
+HomePing logged `Media connected; camera=false microphone=true`, TV media/MIC audio
+profile, no USB microphone, and remote audio subscription. Android's recording
+configuration identifies HomePing with source MIC and `silenced:false` (device
+16 kHz stereo converted to the WebRTC 48 kHz mono client stream). This verifies
+camera-free connection and active microphone capture; the user must still confirm
+that TV speech is audible at the phone. The original TV was not changed or
+reinstalled during this second-TV test.

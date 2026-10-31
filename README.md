@@ -240,3 +240,10 @@ After acceptance, web calls fill the browser window rather than the TV-list card
 The Android caller retains its previous call layout with a small self-preview
 and a separate controls row. Video preserves its aspect ratio, so
 black bars can appear when camera and display proportions differ.
+
+A TV with no camera can remain in the call and receive the caller's picture and
+sound. Its built-in microphone can send audio if Android exposes it to apps and
+microphone access is allowed. Missing/unsupported cameras are skipped; enabling
+a camera later is safe to retry. The caller displays a camera-unavailable message
+when no TV video track arrives. Firmware may still restrict a TV's built-in mic,
+so actual two-way audio requires a hardware call test.
