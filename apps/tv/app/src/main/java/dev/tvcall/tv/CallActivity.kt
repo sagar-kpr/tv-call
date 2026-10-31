@@ -12,6 +12,8 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
@@ -42,6 +44,9 @@ class CallActivity : Activity() {
     private var savingVideoData = false
     private var ending = false
     private var connected = false
+    private var connecting = true
+    private val remoteGuard = TvRemoteGuard(SystemClock.elapsedRealtime())
+    private var endConfirmation: AlertDialog? = null
     private var started = false
     private var micOn = false
     private var cameraOn = false
@@ -93,11 +98,19 @@ class CallActivity : Activity() {
         mic = control( "Enable mic") { toggle(false) }
         camera = control( "Enable camera") { toggle(true) }
         switch = control( "Switch camera") { (localTrack as? LocalVideoTrack)?.switchCamera() }
-        end = control( "End call") { endCall(true) }
+        end = control( "End call") { requestEndCall() }
         val audio = Ui.button(this, "Audio info") { showAudioInfo() }
         for (button in if (api.caller) listOf(mic, camera, switch, audio, end) else listOf(mic, camera, switch, end))
             controls.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
-        layout.addView(controls); setContentView(layout); end.requestFocus(); controlsEnabled(false)
+        layout.addView(controls); setContentView(layout)
+        if (api.caller) end.requestFocus() else {
+            status.isFocusable = true; status.isFocusableInTouchMode = true
+            status.setOnFocusChangeListener { _, focused ->
+                status.background = if (focused) TvUi.shape(this, android.graphics.Color.rgb(23, 43, 35), 10, TvUi.accent) else null
+            }
+            status.requestFocus()
+        }
+        controlsEnabled(false)
         scope.launch {
             try {
                 val call = withContext(Dispatchers.IO) { if (api.caller) api.request("/calls/$id") else api.action(id, "accept") }
@@ -109,7 +122,7 @@ class CallActivity : Activity() {
                     .filter { it != Manifest.permission.CAMERA || cameraAvailable() }
                     .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
                 if (permissions.isEmpty()) connect() else requestPermissions(permissions.toTypedArray(), 201)
-            } catch (error: Exception) { if (error is CancellationException) throw error; connectionLoader.visibility = android.view.View.GONE; status.text = error.message ?: "Could not start call" }
+            } catch (error: Exception) { if (error is CancellationException) throw error; connecting = false; controlsEnabled(false); connectionLoader.visibility = android.view.View.GONE; status.text = error.message ?: "Could not start call" }
         }
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -118,6 +131,7 @@ class CallActivity : Activity() {
     }
     private fun controlsEnabled(value: Boolean) {
         mic.isEnabled = value; camera.isEnabled = value; switch.isEnabled = value
+        end.isEnabled = api.caller || !connecting
     }
     private fun hasPermission(name: String) = checkSelfPermission(name) == PackageManager.PERMISSION_GRANTED
     private fun connect() {
@@ -154,7 +168,7 @@ class CallActivity : Activity() {
                     }
                 } }
                 withTimeout(35_000) { active.connect(credentials.getString("url"), credentials.getString("token")) }
-                connected = true; connectionLoader.visibility = android.view.View.GONE; controlsEnabled(true)
+                connected = true; connectionLoader.visibility = android.view.View.GONE
                 val notices = mutableListOf<String>()
                 if (hasPermission(Manifest.permission.RECORD_AUDIO)) {
                     try { micOn = active.localParticipant.setMicrophoneEnabled(true); if (!micOn) notices.add("Microphone unavailable") }
@@ -178,10 +192,11 @@ class CallActivity : Activity() {
                     ?.let { if (it is VideoTrack) attachRemote(it) }
                 if (remoteTrack == null) remotePlaceholder.text = if (api.caller) "TV camera is off or not connected" else "Waiting for caller video…"
                 status.text = if (notices.isEmpty()) "Connected" else "Connected · ${notices.joinToString(" · ")}"
+                connecting = false; controlsEnabled(true)
                 DebugEvents.add(this@CallActivity, "Media connected; camera=$cameraOn microphone=$micOn")
             } catch (error: Exception) {
                 if (error is CancellationException && error !is TimeoutCancellationException) throw error
-                connected = false; connectionLoader.visibility = android.view.View.GONE; controlsEnabled(false); releaseMedia()
+                connected = false; connecting = false; connectionLoader.visibility = android.view.View.GONE; controlsEnabled(false); releaseMedia()
                 status.text = "Could not connect video: ${error.message ?: "connection failed"}. End this call and try again."
                 DebugEvents.add(this@CallActivity, "Media connection failed")
             }
@@ -296,9 +311,27 @@ class CallActivity : Activity() {
         if (api.caller) return
         sendBroadcast(Intent("$packageName.CLOSE").setPackage(packageName).putExtra("callId", id)); Alerts.clear(this, id)
     }
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::api.isInitialized && !api.caller && event.keyCode in listOf(
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A) &&
+            remoteGuard.consume(SystemClock.elapsedRealtime(), connecting, event.action == KeyEvent.ACTION_UP, event.repeatCount)) return true
+        return super.dispatchKeyEvent(event)
+    }
+    private fun requestEndCall() {
+        if (ending) return
+        if (api.caller) { endCall(true); return }
+        if (endConfirmation?.isShowing == true) return
+        val dialog = AlertDialog.Builder(this).setTitle("End this call?")
+            .setPositiveButton("Keep calling") { _, _ -> }
+            .setNegativeButton("End call") { _, _ -> endCall(true) }.create()
+        endConfirmation = dialog
+        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).requestFocus() }
+        dialog.setOnDismissListener { endConfirmation = null; if (!ending) status.requestFocus() }
+        dialog.show()
+    }
     private fun endCall(notify: Boolean) {
         if (ending) return
-        ending = true; connected = false; scope.cancel(); releaseMedia(); closePrompt()
+        ending = true; endConfirmation?.dismiss(); connected = false; scope.cancel(); releaseMedia(); closePrompt()
         if (notify && accepted) Backend.io.execute {
             try { api.action(id, "end") } catch (_: Exception) { DebugEvents.add(this, "End pending; server media lease will expire") }
         }
@@ -313,7 +346,7 @@ class CallActivity : Activity() {
         // ends the call instead of silently keeping camera/mic active.
         if (!isChangingConfigurations && !ending && ::api.isInitialized) endCall(true)
     }
-    override fun onDestroy() { scope.cancel(); releaseMedia(); super.onDestroy() }
+    override fun onDestroy() { endConfirmation?.dismiss(); scope.cancel(); releaseMedia(); super.onDestroy() }
     @Deprecated("Remote Back ends the call")
-    override fun onBackPressed() { endCall(true) }
+    override fun onBackPressed() { requestEndCall() }
 }

@@ -211,7 +211,7 @@ screen already in front, a validated ringing call opens Accept/Reject directly;
 There is no manual recovery step in normal use. Incoming ringtone is ON by default:
 the supplied `ringtone_iphone_14_pro.mp3` is bundled as `homeping_ring.mp3` and
 loops while a validated invitation rings. Ringing temporarily raises media volume
-to at least 70%, then restores the previous level unless the user changed it.
+to at least 20%, then restores the previous level unless the user changed it.
 It stops on acceptance/rejection/cancellation/expiry. TV
 settings include an ON/OFF switch and a eight-second Test ringtone button. **Reliable mode is off by
 default**; when enabled it schedules a periodic token/registration refresh. It
@@ -281,3 +281,14 @@ Portrait view for a larger TV picture on phones, including browser-safe iPhone r
 Landscape view rotates only the received TV video on a portrait browser screen.
 It leaves the self-preview, call controls, and outgoing camera track untouched.
 This display control does not lock the phone camera against physical device rotation.
+
+
+TV call controls stay disabled while connecting. Remote OK/Enter repeat events are
+ignored for 1.5 seconds after the call screen opens, with held presses swallowed
+until release. Initial TV focus is on the neutral connection status. End call and
+remote Back ask for confirmation with Keep calling selected by default. Setup or
+connection failures leave End/Back available; a network-ended call or leaving the
+activity still stops media immediately. Phone controls keep their existing behavior.
+Ringing uses a 20/100 volume floor, preserving louder levels and restoring an
+unchanged temporary boost after ringing. Hardware with coarse volume steps uses
+the nearest available step at or above 20%.

@@ -372,3 +372,32 @@ Resolution may change independently because adaptive streaming remains enabled.
 Typecheck, web build, browser smoke and live media tests pass. Physical phone rotation
 and actual iPhone behavior require hardware testing; this change does not lock physical
 camera orientation. No TV APK or backend change is required for this display-only fix.
+
+
+### Remote double-press protection and softer ringtone — 2026-10-31
+
+TV calls now start with neutral status focus and disabled controls while connecting.
+An elapsed-realtime guard swallows OK/Enter/controller-A presses for 1.5 seconds,
+and held/repeated presses until release. End and remote Back open a confirmation
+whose default selection is Keep calling. Network termination and activity stop
+continue to end capture immediately. A connection error re-enables ending so a
+failed call cannot trap the user.
+
+The temporary ring-volume floor is reduced from 70% to 20% of the Android media
+volume scale. Existing levels >=20% are retained. The previous level is restored
+when ringing stops unless the user changed it. Coarse hardware steps can round up
+slightly. Native regression tests cover double press, held OK, long connection,
+10→20→10 restoration, levels at/above 20, and user volume overrides.
+
+Hardware checks after installation: accept with two quick OK presses and hold OK
+through connection; call must stay open. Confirm neutral focus, D-pad navigation,
+End confirmation default Keep calling, explicit End, remote Back and remote peer
+ending. Test ringing below 20 and above 20; confirm level and restoration on accept,
+reject, cancel and timeout. Real-call behavior remains to be checked by the user.
+
+Release build and 37 native unit tests passed. The final 20%-floor APK was installed
+with replacement on both 192.168.1.2 and 192.168.1.6; installed APK hashes match the
+build artifact. Login/settings were preserved. Existing TV activities were left in
+front during installation. The user must still verify the real double-OK flow and
+confirm the perceived ringtone level on each firmware. No backend/web deploy was
+needed for these native changes.
