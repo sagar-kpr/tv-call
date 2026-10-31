@@ -8,7 +8,7 @@ from pathlib import Path
 RATE = 32000
 DURATION = 8.0
 root = Path(__file__).resolve().parents[1]
-output = root / 'apps/tv/app/src/main/res/raw/homeping_ring.wav'
+output = root / 'artifacts/homeping-original-ring.wav'
 output.parent.mkdir(parents=True, exist_ok=True)
 samples = [0.0] * int(RATE * DURATION)
 

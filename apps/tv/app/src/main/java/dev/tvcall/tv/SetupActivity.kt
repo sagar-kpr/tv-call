@@ -151,6 +151,21 @@ class SetupActivity : Activity() {
             work("Updating preferences…", { Backend.updateSettings(this, Backend.localName(this), Backend.localRoom(this), !Backend.localDnd(this)) }, { dnd.text = "Do Not Disturb: ${if (Backend.localDnd(this)) "On" else "Off"}" })
         }
         preferences.addView(dnd); gap(preferences, 10)
+        val autoPick = TvUi.button(this, "Auto-accept: ${if (Backend.localAutoAccept(this)) "On" else "Off"}") {}
+        autoPick.setOnClickListener {
+            val enable = !Backend.localAutoAccept(this)
+            val save = {
+                work("Updating auto-accept…", {
+                    Backend.updateSettings(this, Backend.localName(this), Backend.localRoom(this), Backend.localDnd(this), enable)
+                }, { autoPick.text = "Auto-accept: ${if (Backend.localAutoAccept(this)) "On" else "Off"}" })
+            }
+            if (enable) android.app.AlertDialog.Builder(this)
+                .setTitle("Auto-accept after 60 seconds?")
+                .setMessage("Unanswered calls from your account will connect automatically, turning on the available camera and microphone. Rejected or cancelled calls stay closed.")
+                .setPositiveButton("Enable") { _, _ -> save() }.setNegativeButton("Cancel", null).show()
+            else save()
+        }
+        preferences.addView(autoPick); gap(preferences, 10)
         val ringtone = TvUi.button(this, "Ringtone: ${if (Backend.ringtone(this)) "On" else "Off"}") {}
         ringtone.setOnClickListener {
             Backend.setRingtone(this, !Backend.ringtone(this)); ringtone.text = "Ringtone: ${if (Backend.ringtone(this)) "On" else "Off"}"

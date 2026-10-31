@@ -1,7 +1,7 @@
 # Live audio/video with LiveKit
 
 HomePing keeps Firebase login, account-owned TVs, FCM invitations, Accept/Reject,
-and the 30-second ringing deadline. After acceptance it uses LiveKit for WebRTC
+and the 60-second ringing deadline. After acceptance it uses LiveKit for WebRTC
 signaling, media forwarding, and the ICE configuration supplied by your LiveKit
 server. The Node API issues participant tokens; it does not relay audio/video.
 No conference code or additional app is needed. Calling remains phone/web → TV.

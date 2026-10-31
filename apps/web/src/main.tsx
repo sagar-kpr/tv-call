@@ -135,7 +135,7 @@ function Caller({ api, activationCode }: { api: Api; activationCode: string }) {
         <button className="primary" disabled={busy || (!!call && !isTerminal(call.status))} onClick={() => run(async () => setCall(await api.call(device.deviceId)))}>Call</button>
       </div>)}</>}
     {call && <div className="call-state" role="status"><strong>{({
-      ringing: 'Ringing', accepted: 'Accepted', declined: 'Declined', missed: 'Missed',
+      ringing: call.autoAcceptUntil && clock >= call.expiresAt ? 'Connecting to TV…' : 'Ringing', accepted: 'Accepted', declined: 'Declined', missed: 'Missed',
       busy: 'Busy', cancelled: 'Cancelled', ended: 'Call ended', failed: 'Delivery failed',
     } as Record<string,string>)[call.status]}</strong>
       {call.status === 'ringing' && <><p>{call.receivedAt ? 'TV received the invitation' : call.delivery === 'submitted' ? 'Invitation sent' : 'Sending'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</p>

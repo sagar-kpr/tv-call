@@ -31,7 +31,9 @@ class RingService : Service() {
     @Volatile private var closed = false
     private var presentationRequested = false
     private var permissionWarningLogged = false
-    private val expire = Runnable { close() }
+    private var autoAcceptUntil = 0L
+    @Volatile private var autoPicking = false
+    private val expire = Runnable { finishRinging() }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { if (intent.getStringExtra("callId") == callId) close() }
     }
@@ -56,9 +58,12 @@ class RingService : Service() {
             try {
                 val call = if (!acknowledged) Backend.action(this, id, "receive") else Backend.api(this, "/calls/$id")
                 acknowledged = true
+                if (autoPicking) return@scheduleWithFixedDelay
                 if (call.optString("status") != "ringing") main.post { close() }
                 else main.post {
-                    if (closed) return@post
+                    if (closed || autoPicking) return@post
+                    autoAcceptUntil = call.optLong("autoAcceptUntil", 0L)
+                    if (System.currentTimeMillis() >= deadline) { finishRinging(); return@post }
                     sound.update(call.optString("status"), call.optLong("expiresAt"), System.currentTimeMillis(), Backend.ringtone(this))
                     if (overlay != null) return@post
                     val enabled = Backend.overlay(this)
@@ -84,6 +89,33 @@ class RingService : Service() {
             }
         }, 0, 1, TimeUnit.SECONDS)
         return START_NOT_STICKY
+    }
+    private fun finishRinging() {
+        if (closed || autoPicking) return
+        sound.close()
+        val foreground = IncomingPresentation.screen() in listOf(IncomingPromptPolicy.Screen.SETUP, IncomingPromptPolicy.Screen.INCOMING)
+        if (!AutoAcceptPolicy.due(Backend.localAutoAccept(this), deadline, autoAcceptUntil, System.currentTimeMillis()) ||
+            (!foreground && !Settings.canDrawOverlays(this))) { close(); return }
+        autoPicking = true
+        // The server atomically rechecks the TV preference, deadline and cancellation.
+        Backend.io.execute {
+            var accepted = false
+            while (!closed && System.currentTimeMillis() < autoAcceptUntil) {
+                try { accepted = Backend.action(this, callId, "auto-accept").optString("status") == "accepted"; break }
+                catch (error: HttpFailure) {
+                    if (error.status != 409 || error.message != "Auto-accept is not due yet") break
+                    Thread.sleep(500)
+                } catch (_: Exception) { break }
+            }
+            main.post {
+                if (!closed && accepted) {
+                    try { startActivity(Alerts.activity(this, CallActivity::class.java, callId, "accept")); DebugEvents.add(this, "Call auto-accepted after 60 seconds") }
+                    catch (_: Exception) { DebugEvents.add(this, "Automatic call launch blocked by firmware") }
+                }
+                close()
+            }
+        }
+        main.postDelayed({ close() }, 10_000)
     }
     private fun showOverlay() {
         if (System.currentTimeMillis() >= deadline) { close(); return }

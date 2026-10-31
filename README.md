@@ -187,7 +187,7 @@ The caller lists all TVs under the signed-in account with brand/model and
 last-seen time. It does not claim a TV is online. Calls can become Ringing,
 Accepted, Declined, Missed, Busy, Cancelled, Ended, or Failed. DND immediately
 returns Declined without sending FCM. One ringing/accepted call is allowed per
-TV and ringing expires after 30 seconds. After acceptance the caller joins automatically. Allow camera/mic permissions
+TV and ringing lasts 60 seconds. After acceptance the caller joins automatically. Allow camera/mic permissions
 when requested. The TV joins directly after
 acceptance. Both sides have mute/camera/End controls, and Android also has camera
 switching. Missing or denied inputs are displayed. End on TV returns Home; End
@@ -209,8 +209,10 @@ adb shell appops set dev.tvcall.caller SYSTEM_ALERT_WINDOW allow
 Disconnect ADB after setup and test a call over Home. With HomePing's TV setup
 screen already in front, a validated ringing call opens Accept/Reject directly;
 There is no manual recovery step in normal use. Incoming ringtone is ON by default:
-a bundled melodic marimba/chime ringtone repeats through the TV's media-volume output while the validated
-invitation rings, then stops on acceptance/rejection/cancellation/expiry. TV
+the supplied `ringtone_iphone_14_pro.mp3` is bundled as `homeping_ring.mp3` and
+loops while a validated invitation rings. Ringing temporarily raises media volume
+to at least 70%, then restores the previous level unless the user changed it.
+It stops on acceptance/rejection/cancellation/expiry. TV
 settings include an ON/OFF switch and a eight-second Test ringtone button. **Reliable mode is off by
 default**; when enabled it schedules a periodic token/registration refresh. It
 does not bypass Android force-stop or manufacturer background restrictions.
@@ -247,3 +249,31 @@ microphone access is allowed. Missing/unsupported cameras are skipped; enabling
 a camera later is safe to retry. The caller displays a camera-unavailable message
 when no TV video track arrives. Firmware may still restrict a TV's built-in mic,
 so actual two-way audio requires a hardware call test.
+
+
+TV settings include **Auto-accept** (default OFF). Enabling it requires confirming
+that an unanswered call will open the available camera/microphone after 60 seconds.
+The TV must receive and validate the invitation, remain authorized, and reach the
+server at the deadline. The server allows a bounded 10-second completion window
+for that TV's `auto-accept` action; it never auto-accepts offline TVs itself. Cancel,
+Reject, DND and disabling the preference prevent automatic acceptance. A stale
+invitation cannot start a call. Test automatic activity launch on each firmware;
+background use requires the already configured call overlay permission.
+
+New TVs default to room **Bedroom**. Existing custom room names are preserved;
+registration supplies Bedroom for an existing null room. The browser TV video is
+inline and muted (remote sound plays through a separate audio element), attached
+into the visible layout before LiveKit starts adaptive-video observation. If the
+browser blocks autoplay, **Show TV video** resumes it directly without navigating
+away. Safari/iPhone hardware verification remains required.
+
+Video capture targets 1280×720 at up to 24 fps. The main video encoding is capped
+at 1.5 Mbps; lower simulcast layers, audio, and transport overhead add traffic.
+Devices/network adaptation may deliver lower resolution. Screen fit remains
+aspect-preserving; a portrait phone can have letterboxing for a wide TV camera.
+
+
+After 15 minutes of an accepted call, camera capture switches to a 480p/20 fps target
+without ending the media session. Weak-network adaptation can reduce either target
+further and recover up to the current limit. The web caller includes Landscape view /
+Portrait view for a larger TV picture on phones, including browser-safe iPhone rotation.

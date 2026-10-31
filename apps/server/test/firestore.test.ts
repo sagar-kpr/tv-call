@@ -17,7 +17,7 @@ test('Firestore adapter persists account devices and call expiry', { skip: !proc
     builtInCameraAvailable: false, usbHostSupported: true, usbCameraAttached: false,
     cameraApiCount: 0, fcmToken: 'valid-token-1234567890',
   };
-  const service = new Calls(new FirestoreStore(db), { send: async () => {} }, auth, () => now, () => 'ABCDEFGH');
+  const service = new Calls(new FirestoreStore(db), { send: async () => {} }, auth, () => now);
   const tv = { kind: 'tv' as const, uid: `tv:${id}`, ownerUid: 'owner', deviceId: id };
   try {
     const started = await service.beginAuthorization(registration, 'x'.repeat(48));
@@ -28,7 +28,7 @@ test('Firestore adapter persists account devices and call expiry', { skip: !proc
     await service.action(tv, call.id, 'receive');
     const restarted = new Calls(new FirestoreStore(db), { send: async () => {} }, auth, () => now);
     assert.ok((await restarted.get({ kind: 'human', uid: 'owner', email: 'x@test' }, call.id)).receivedAt);
-    now += 30_001;
+    now += 60_001;
     assert.equal((await restarted.get({ kind: 'human', uid: 'owner', email: 'x@test' }, call.id)).status, 'missed');
     const mediaCall = await restarted.create('owner', id);
     await restarted.action(tv, mediaCall.id, 'accept');

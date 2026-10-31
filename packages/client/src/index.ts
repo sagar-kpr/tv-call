@@ -12,20 +12,20 @@ export type Call = {
   status: CallStatus; createdAt: number; expiresAt: number;
   delivery: 'pending' | 'submitted' | 'failed' | 'not-sent';
   acceptedAt?: number; callerSeenAt?: number; tvSeenAt?: number; mediaDeadline?: number;
-  receivedAt?: number; updatedAt: number; error?: string;
+  autoAcceptUntil?: number; receivedAt?: number; updatedAt: number; error?: string;
 };
 export type TvDevice = {
   deviceId: string; type: 'tv'; name: string; room: string | null;
   manufacturer: string; model: string; androidVersion: string; apiLevel: number;
   screenWidthPx: number; screenHeightPx: number; firmwareFingerprint: string;
   builtInCameraAvailable: boolean; usbHostSupported: boolean;
-  usbCameraAttached: boolean; cameraApiCount: number; doNotDisturb: boolean;
+  usbCameraAttached: boolean; cameraApiCount: number; doNotDisturb: boolean; autoAccept?: boolean;
   lastSeen: number; createdAt: number; updatedAt: number;
 };
 export type PublicConfig = {
   apiKey: string; projectId: string; androidAppId: string; messagingSenderId: string;
   authDomain?: string; googleWebClientId?: string; googleAndroidClientId?: string;
-  webUrl?: string; mediaEnabled?: boolean;
+  webUrl?: string; mediaEnabled?: boolean; ringSeconds?: number; autoAcceptSupported?: boolean;
 };
 async function jsonFetch(url: string, options: RequestInit = {}, timeoutMs = 12_000) {
   const controller = new AbortController();
@@ -108,4 +108,11 @@ export class AutoJoinGate {
     this.launched.add(id); return true;
   }
   retry(id: string): void { this.launched.delete(id); }
+}
+
+/** Upper capture bound; LiveKit may adapt below this when bandwidth is limited. */
+export function videoProfile(acceptedAt: number | undefined, now = Date.now()) {
+  return acceptedAt !== undefined && now - acceptedAt >= 15 * 60_000
+    ? { width: 854, height: 480, frameRate: 20, label: 'Auto · up to 480p' }
+    : { width: 1280, height: 720, frameRate: 24, label: 'Auto · up to 720p' };
 }

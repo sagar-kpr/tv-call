@@ -94,7 +94,7 @@ test('call lifecycle is authorized, idempotent, busy and missed', async () => {
   const { service, messages, advance } = await setup();
   const call = await service.create('owner', deviceId);
   assert.equal(call.delivery, 'submitted');
-  assert.equal(messages[0].ttl, 30_000);
+  assert.equal(messages[0].ttl, 60_000);
   await assert.rejects(service.action(human(), call.id, 'accept'), { status: 403 });
   const receipt = await service.action(tv, call.id, 'receive');
   assert.ok(receipt.receivedAt);
@@ -103,7 +103,7 @@ test('call lifecycle is authorized, idempotent, busy and missed', async () => {
   assert.equal(busy.status, 'busy');
   assert.equal((await service.action(tv, call.id, 'decline')).status, 'declined');
   const missed = await service.create('owner', deviceId);
-  advance(30_000);
+  advance(60_000);
   await assert.rejects(service.action(tv, missed.id, 'accept'), { status: 409 });
   assert.equal((await service.get(human(), missed.id)).status, 'missed');
 });
@@ -205,4 +205,45 @@ test('media lease needs heartbeats from both sides; one crashed peer expires', a
   assert.equal((await service.get(human(), call.id)).status, 'ended');
   await assert.rejects(service.mediaSession(tv, call.id), { status: 409 });
   assert.equal((await service.create('owner', deviceId)).status, 'ringing');
+});
+
+test('new TVs default to Bedroom and auto-accept off', async () => {
+  const { service } = await setup();
+  const [device] = await service.devices('owner');
+  assert.equal(device.room, 'Bedroom');
+  assert.equal(device.autoAccept, false);
+  const call = await service.create('owner', deviceId);
+  assert.equal(call.expiresAt - call.createdAt, 60_000);
+  assert.equal(call.autoAcceptUntil, undefined);
+});
+
+test('auto-accept is TV-only, due at 60 seconds, and idempotent', async () => {
+  const { service, advance, messages } = await setup();
+  await service.updateTvSettings(tv, { autoAccept: true });
+  const call = await service.create('owner', deviceId);
+  assert.equal(messages[0].ttl, 60_000);
+  await service.action(tv, call.id, 'receive');
+  await assert.rejects(service.action(human(), call.id, 'auto-accept'), { status: 403 });
+  advance(59_999);
+  await assert.rejects(service.action(tv, call.id, 'auto-accept'), { status: 409 });
+  advance(1);
+  assert.equal((await service.get(human(), call.id)).status, 'ringing');
+  await assert.rejects(service.action(tv, call.id, 'accept'), { status: 409 });
+  assert.equal((await service.action(tv, call.id, 'auto-accept')).status, 'accepted');
+  assert.equal((await service.action(tv, call.id, 'auto-accept')).status, 'accepted');
+});
+
+test('auto-accept cannot revive cancelled, declined, unreceived or expired invitations', async () => {
+  for (const state of ['cancelled', 'declined', 'unreceived', 'expired', 'disabled', 'dnd'] as const) {
+    const { service, advance } = await setup();
+    await service.updateTvSettings(tv, { autoAccept: true });
+    const call = await service.create('owner', deviceId);
+    if (state !== 'unreceived') await service.action(tv, call.id, 'receive');
+    if (state === 'cancelled') await service.action(human(), call.id, 'cancel');
+    if (state === 'declined') await service.action(tv, call.id, 'decline');
+    if (state === 'disabled') await service.updateTvSettings(tv, { autoAccept: false });
+    if (state === 'dnd') await service.updateTvSettings(tv, { doNotDisturb: true });
+    advance(state === 'expired' ? 70_000 : 60_000);
+    await assert.rejects(service.action(tv, call.id, 'auto-accept'), { status: 409 });
+  }
 });

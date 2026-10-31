@@ -287,3 +287,10 @@ footer {
 .brand-mark { display: block; flex-shrink: 0; border-radius: 10px; }
 
 .remote-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: #9fb7ab; pointer-events: none; }
+
+.video-quality { display: block; margin-top: 3px; font-size: 11px; color: #9fb7ab; }
+
+/* A browser-safe landscape view, including iPhones without orientation-lock support. */
+@media (orientation: portrait) {
+  .video-call.landscape-view { inset: auto; left: 50%; top: 50%; width: 100dvh; height: 100dvw; transform: translate(-50%, -50%) rotate(90deg); }
+}

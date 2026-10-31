@@ -315,3 +315,47 @@ configuration identifies HomePing with source MIC and `silenced:false` (device
 camera-free connection and active microphone capture; the user must still confirm
 that TV speech is audible at the phone. The original TV was not changed or
 reinstalled during this second-TV test.
+
+
+### 60-second ringing, custom sound, auto-accept and video update — 2026-10-31
+
+The supplied Downloads MP3 is bundled as `res/raw/homeping_ring.mp3`. Ringing lasts
+60 seconds with matching FCM TTL. A temporary media-volume boost to at least 70%
+is restored afterward unless the user changes volume themselves. Preview and all
+ring-stop paths use the same restoration. Default room is Bedroom for missing/null
+rooms; custom room names remain. Auto-accept defaults OFF, has an explicit TV-side
+camera/mic consent dialog, and must be saved through the authenticated backend.
+
+Auto-accept is TV initiated after 60 seconds, using a 10-second server completion
+window only for an already-received invitation. Rejected, cancelled, DND, disabled,
+unreceived and stale invitations are rejected. One active invitation remains enforced.
+Test ON/OFF separately on each TV, with manual accept/reject/cancel before 60 seconds,
+loss of connectivity at the deadline, repeated delivery, and restored audio volume.
+
+Camera capture targets 720p/24 fps initially (1.5 Mbps main encoding cap, simulcast
+and bandwidth adaptation enabled). At 15 minutes since acceptance the capture target
+reduces to 854×480/20 fps. Camera hardware may choose a supported nearby format.
+LiveKit may adapt below either target and recover up to that limit. Verify the long
+call on native hardware and actual data usage; the UI label is a configured limit,
+not a measurement of delivered pixels or connection speed.
+
+The user's black remote-video screenshot was an iPhone browser call. Browser video
+is now appended to the visible DOM before LiveKit attachment, with playsinline and
+muted set before autoplay; audio remains separate. A blocked-video button and visible-
+page playback retry avoid requiring app navigation. A Landscape view toggle uses a
+portrait-safe CSS rotation and normal landscape viewport behavior. Actual iPhone/Safari
+verification is still required. The speculative native texture-renderer change was
+removed after the screenshot identified the browser path; Android layout is retained.
+
+
+Release verification: 34 backend/client/Firestore rules tests pass against the
+cached Firestore emulator; 32 native unit tests and the release APK build pass.
+The APK's bundled MP3 bytes match the supplied Downloads file. Live LiveKit browser
+integration verifies remote video/audio, inline muted playback attached in the DOM,
+portrait/landscape view switching, and an accelerated 15-minute switch to a real
+<=480px local video stream while media remains connected. iPhone Safari playback,
+15-minute native capture, custom ringtone loudness/restoration, and automatic
+background call acceptance still need hardware testing. At preparation time both
+TVs were absent from ADB; connection to 192.168.1.4:5555 was refused and .8 did not
+connect. The Render backend needs deployment of the source update before the
+60-second timer and auto-accept can work; Firebase Hosting alone cannot change it.

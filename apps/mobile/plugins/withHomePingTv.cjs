@@ -129,8 +129,9 @@ dependencies {
     }
     const raw = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/raw');
     await fs.mkdir(raw, { recursive: true });
-    await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/raw/homeping_ring.wav'),
-      path.join(raw, 'homeping_ring.wav'));
+    await fs.rm(path.join(raw, 'homeping_ring.wav'), { force: true });
+    await fs.copyFile(path.join(config.modRequest.projectRoot, '../tv/app/src/main/res/raw/homeping_ring.mp3'),
+      path.join(raw, 'homeping_ring.mp3'));
     return config;
   }]);
 };

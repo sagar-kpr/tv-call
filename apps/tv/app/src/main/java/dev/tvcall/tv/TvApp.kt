@@ -170,19 +170,21 @@ object Backend {
         val result = api(c, "/tv/register", hardware(c, push))
         prefs(c).edit()
             .putString("name", result.optString("name", "Living Room TV"))
-            .putString("room", result.optString("room", ""))
-            .putBoolean("dnd", result.optBoolean("doNotDisturb", false)).apply()
+            .putString("room", result.optString("room", "Bedroom"))
+            .putBoolean("dnd", result.optBoolean("doNotDisturb", false))
+            .putBoolean("autoAccept", result.optBoolean("autoAccept", false)).apply()
         DebugEvents.add(c, "Registration and last-seen updated")
         return result
     }
-    fun updateSettings(c: Context, name: String, room: String, dnd: Boolean): JSONObject {
-        val result = api(c, "/tv/settings", JSONObject().put("name", name).put("room", room.ifBlank { JSONObject.NULL }).put("doNotDisturb", dnd), "PATCH")
-        prefs(c).edit().putString("name", name).putString("room", room).putBoolean("dnd", dnd).apply()
+    fun updateSettings(c: Context, name: String, room: String, dnd: Boolean, autoAccept: Boolean = localAutoAccept(c)): JSONObject {
+        val result = api(c, "/tv/settings", JSONObject().put("name", name).put("room", room.ifBlank { JSONObject.NULL }).put("doNotDisturb", dnd).put("autoAccept", autoAccept), "PATCH")
+        prefs(c).edit().putString("name", name).putString("room", room).putBoolean("dnd", dnd).putBoolean("autoAccept", autoAccept).apply()
         DebugEvents.add(c, "TV settings saved")
         return result
     }
     fun localName(c: Context) = prefs(c).getString("name", "Living Room TV") ?: "Living Room TV"
-    fun localRoom(c: Context) = prefs(c).getString("room", "") ?: ""
+    fun localRoom(c: Context) = prefs(c).getString("room", "Bedroom").orEmpty().ifBlank { "Bedroom" }
+    fun localAutoAccept(c: Context) = prefs(c).getBoolean("autoAccept", false)
     fun localDnd(c: Context) = prefs(c).getBoolean("dnd", false)
     fun ringtone(c: Context) = prefs(c).getBoolean("ringtone", true)
     fun setRingtone(c: Context, value: Boolean) { prefs(c).edit().putBoolean("ringtone", value).apply() }

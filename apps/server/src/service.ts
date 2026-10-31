@@ -14,7 +14,7 @@ export interface DeviceAuthAdmin {
   revoke(uid: string): Promise<void>;
   deleteUser(uid: string): Promise<void>;
 }
-export type TvRegistration = Omit<TvDevice, 'type' | 'name' | 'room' | 'doNotDisturb' | 'lastSeen' | 'createdAt' | 'updatedAt'> & {
+export type TvRegistration = Omit<TvDevice, 'type' | 'name' | 'room' | 'doNotDisturb' | 'autoAccept' | 'lastSeen' | 'createdAt' | 'updatedAt'> & {
   fcmToken?: string | null;
 };
 type StoredDevice = TvDevice & { authUid: string; fcmToken: string | null; activeCallId: string | null; schemaVersion: 1 };
@@ -27,7 +27,7 @@ type CodeLookup = { authorizationId: string; expiresAt: number };
 type DeviceOwner = { ownerUid: string; authUid: string };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (call: Call, now: number): Call =>
-  call.status === 'ringing' && call.expiresAt <= now ? { ...call, status: 'missed', updatedAt: now } :
+  call.status === 'ringing' && (call.receivedAt ? call.autoAcceptUntil ?? call.expiresAt : call.expiresAt) <= now ? { ...call, status: 'missed', updatedAt: now } :
   call.status === 'accepted' && (call.mediaDeadline ?? call.updatedAt + 90_000) <= now
     ? { ...call, status: 'ended', error: 'media-session-expired', updatedAt: now } : call;
 const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -105,7 +105,7 @@ export class Calls {
       const device: StoredDevice = {
         ...authorization.registration, authUid, type: 'tv',
         name: old?.name ?? 'Living Room TV',
-        room: old?.room ?? null, doNotDisturb: old?.doNotDisturb ?? false,
+        room: old?.room ?? 'Bedroom', doNotDisturb: old?.doNotDisturb ?? false, autoAccept: old?.autoAccept ?? false,
         fcmToken: authorization.registration.fcmToken ?? old?.fcmToken ?? null,
         activeCallId: old?.activeCallId ?? null, lastSeen: now, createdAt: old?.createdAt ?? now, updatedAt: now, schemaVersion: 1,
       };
@@ -169,7 +169,7 @@ export class Calls {
       const now = this.now();
       const next: StoredDevice = {
         ...old, ...registration, deviceId: old.deviceId, authUid: old.authUid,
-        type: 'tv', name: old.name, room: old.room, doNotDisturb: old.doNotDisturb,
+        type: 'tv', name: old.name, room: old.room ?? 'Bedroom', doNotDisturb: old.doNotDisturb, autoAccept: old.autoAccept ?? false,
         activeCallId: old.activeCallId, fcmToken: registration.fcmToken ?? old.fcmToken,
         createdAt: old.createdAt, lastSeen: now, updatedAt: now, schemaVersion: 1,
       };
@@ -177,7 +177,7 @@ export class Calls {
       return publicDevice(next);
     });
   }
-  async updateTvSettings(principal: TvPrincipal, changes: { name?: string; room?: string | null; doNotDisturb?: boolean }) {
+  async updateTvSettings(principal: TvPrincipal, changes: { name?: string; room?: string | null; doNotDisturb?: boolean; autoAccept?: boolean }) {
     return this.store.run(async (tx) => {
       const device = await this.tvDevice(tx, principal);
       const next = { ...device, ...changes, updatedAt: this.now(), lastSeen: this.now() };
@@ -244,7 +244,7 @@ export class Calls {
       if (!device.fcmToken) throw new Fault(409, 'TV push token unavailable; reopen HomePing on the TV');
       const call: Call = {
         id, deviceId, ownerUid, callerUid: ownerUid, status: 'ringing',
-        createdAt: now, expiresAt: now + 30_000, delivery: 'pending', updatedAt: now,
+        createdAt: now, expiresAt: now + 60_000, ...(device.autoAccept ? { autoAcceptUntil: now + 70_000 } : {}), delivery: 'pending', updatedAt: now,
       };
       if (old && current && old.status !== current.status) tx.set(`calls/${old.id}`, current);
       tx.set(`calls/${id}`, call);
@@ -305,11 +305,11 @@ export class Calls {
       return next;
     });
   }
-  async action(principal: Principal, id: string, action: 'receive' | 'accept' | 'decline' | 'cancel' | 'end') {
+  async action(principal: Principal, id: string, action: 'receive' | 'accept' | 'auto-accept' | 'decline' | 'cancel' | 'end') {
     const result = await this.store.run(async (tx) => {
       const raw = await tx.get<Call>(`calls/${id}`);
       if (!raw) throw new Fault(404, 'Call not found');
-      const tvAction = ['receive', 'accept', 'decline'].includes(action) || (action === 'end' && principal.kind === 'tv');
+      const tvAction = ['receive', 'accept', 'auto-accept', 'decline'].includes(action) || (action === 'end' && principal.kind === 'tv');
       if (tvAction) {
         if (principal.kind !== 'tv' || principal.ownerUid !== raw.ownerUid || principal.deviceId !== raw.deviceId)
           throw new Fault(403, 'Action forbidden');
@@ -318,14 +318,22 @@ export class Calls {
       const path = `users/${raw.ownerUid}/devices/${raw.deviceId}`;
       const device = await tx.get<StoredDevice>(path);
       let call = live(raw, this.now());
-      const target = { accept: 'accepted', decline: 'declined', cancel: 'cancelled', end: 'ended' } as const;
+      if (action === 'auto-accept' && call.status !== 'accepted') {
+        if (!device?.autoAccept || device.doNotDisturb || !call.autoAcceptUntil || !call.receivedAt ||
+            this.now() >= call.autoAcceptUntil || call.status !== 'ringing')
+          throw new Fault(409, 'Automatic acceptance is unavailable');
+        if (this.now() < call.expiresAt) throw new Fault(409, 'Auto-accept is not due yet');
+      }
+      if (action === 'accept' && call.status === 'ringing' && this.now() >= call.expiresAt)
+        throw new Fault(409, 'Manual ringing deadline passed');
+      const target = { 'auto-accept': 'accepted', accept: 'accepted', decline: 'declined', cancel: 'cancelled', end: 'ended' } as const;
       if (action === 'receive') {
         if (call.status === 'ringing' && !call.receivedAt) call = { ...call, receivedAt: this.now(), updatedAt: this.now() };
       } else if (call.status === target[action]) {
         // idempotent retry
-      } else if ((call.status === 'ringing' && ['accept', 'decline', 'cancel'].includes(action)) || (call.status === 'accepted' && action === 'end')) {
+      } else if ((call.status === 'ringing' && ['accept', 'auto-accept', 'decline', 'cancel'].includes(action)) || (call.status === 'accepted' && action === 'end')) {
         call = { ...call, status: target[action], updatedAt: this.now(),
-          ...(action === 'accept' ? { acceptedAt: this.now(), callerSeenAt: this.now(), tvSeenAt: this.now(), mediaDeadline: this.now() + 90_000 } : {}),
+          ...(['accept', 'auto-accept'].includes(action) ? { acceptedAt: this.now(), callerSeenAt: this.now(), tvSeenAt: this.now(), mediaDeadline: this.now() + 90_000 } : {}),
         };
       } else {
         if (call.status !== raw.status) tx.set(`calls/${id}`, call);

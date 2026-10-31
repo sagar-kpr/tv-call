@@ -46,9 +46,10 @@ class IncomingActivity : Activity() {
                 runOnUiThread {
                     if (!alive) return@runOnUiThread
                     if (call.getString("status") != "ringing" || remaining <= 0) { dismiss(); finish(); return@runOnUiThread }
-                    status.text = "Use the remote to accept or reject."
+                    status.text = if (Backend.localAutoAccept(this) && call.has("autoAcceptUntil")) "Auto-accepts after 60 seconds unless you reject." else "Use the remote to accept or reject."
                     accept.isEnabled = true; reject.isEnabled = true; accept.requestFocus()
-                    main.postDelayed({ if(alive) { dismiss(); finish() } }, remaining)
+                    val autoWindow = if (Backend.localAutoAccept(this)) call.optLong("autoAcceptUntil", call.getLong("expiresAt")) - call.getLong("expiresAt") else 0L
+                    main.postDelayed({ if(alive) { if (autoWindow <= 0) dismiss(); finish() } }, remaining + autoWindow.coerceAtLeast(0) + if (autoWindow > 0) 1000 else 0)
                     main.post(poll)
                 }
             } catch(e: Exception) { runOnUiThread { status.text = "Invitation unavailable: ${e.message}"; main.postDelayed({ finish() }, 5000) } }

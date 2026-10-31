@@ -166,7 +166,7 @@ function Caller({ api, backend, user, setError }: { api: Api; backend: string; u
         onPress={() => void run(async () => setCall(await api.call(device.deviceId)))} />}
     </View>)}
     {call && <View style={styles.state}><Text style={styles.deviceTitle}>{({
-      ringing: 'Ringing', accepted: 'Accepted', declined: 'Declined', missed: 'Missed',
+      ringing: call.autoAcceptUntil && clock >= call.expiresAt ? 'Connecting to TV…' : 'Ringing', accepted: 'Accepted', declined: 'Declined', missed: 'Missed',
       busy: 'Busy', cancelled: 'Cancelled', ended: 'Call ended', failed: 'Delivery failed',
     } as Record<string,string>)[call.status]}</Text>
       {call.status === 'ringing' && <><Text style={styles.muted}>{call.receivedAt ? 'TV received the invitation' : 'Waiting for TV'} · {Math.max(0, Math.ceil((call.expiresAt - clock) / 1000))}s</Text>

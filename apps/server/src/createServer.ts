@@ -17,6 +17,7 @@ export function createServer(webDirectory?: string) {
     return value;
   };
   const config = {
+    ringSeconds: 60, autoAcceptSupported: true,
     projectId: required('FIREBASE_PROJECT_ID'),
     apiKey: required('FIREBASE_API_KEY'),
     androidAppId: required('FIREBASE_ANDROID_APP_ID'),

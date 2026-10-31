@@ -25,6 +25,8 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.Track
+import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.VideoEncoding
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.*
@@ -36,6 +38,8 @@ class CallActivity : Activity() {
     private lateinit var api: CallApi
     private var id = ""
     private var accepted = false
+    private var acceptedAt = 0L
+    private var savingVideoData = false
     private var ending = false
     private var connected = false
     private var started = false
@@ -98,7 +102,7 @@ class CallActivity : Activity() {
             try {
                 val call = withContext(Dispatchers.IO) { if (api.caller) api.request("/calls/$id") else api.action(id, "accept") }
                 check(call.optString("status") == "accepted") { "Invitation is no longer available" }
-                accepted = true; closePrompt()
+                accepted = true; acceptedAt = call.optLong("acceptedAt", System.currentTimeMillis()); savingVideoData = VideoQualityPolicy.saveData(acceptedAt, System.currentTimeMillis()); closePrompt()
                 DebugEvents.add(this@CallActivity, "Call ${id.take(8)} accepted; starting media")
                 monitor()
                 val permissions = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
@@ -128,7 +132,8 @@ class CallActivity : Activity() {
                     manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_EXTERNAL
                 } }.getOrNull() else null
                 active.videoTrackCaptureDefaults = LocalVideoTrackOptions(deviceId = external,
-                    captureParams = VideoCaptureParameter(640, 360, 24))
+                    captureParams = if (savingVideoData) VideoCaptureParameter(854, 480, 20) else VideoCaptureParameter(1280, 720, 24))
+                active.videoTrackPublishDefaults = VideoTrackPublishDefaults(videoEncoding = VideoEncoding(1_500_000, 24), simulcast = true)
                 active.initVideoRenderer(remote); active.initVideoRenderer(local); local.setMirror(api.caller); rendererReady = true
                 launch { active.events.collect { event ->
                     if (ending || room !== active) return@collect
@@ -161,6 +166,7 @@ class CallActivity : Activity() {
                     cameraOn = OptionalCamera.enable(cameraPresent) { active.localParticipant.setCameraEnabled(true) }
                     if (cameraOn) attachLocal() else notices.add("No camera connected")
                 } else notices.add("Camera permission denied")
+                startVideoDataSaver()
                 attachLocalAudio()
                 active.setSpeakerMute(false)
                 startAudioMeter()
@@ -179,6 +185,23 @@ class CallActivity : Activity() {
                 status.text = "Could not connect video: ${error.message ?: "connection failed"}. End this call and try again."
                 DebugEvents.add(this@CallActivity, "Media connection failed")
             }
+        }
+    }
+    private fun startVideoDataSaver() = scope.launch {
+        while (isActive && !ending && !savingVideoData) {
+            delay(1_000)
+            if (!VideoQualityPolicy.saveData(acceptedAt, System.currentTimeMillis())) continue
+            val active = room ?: return@launch
+            try {
+                val capture = VideoCaptureParameter(854, 480, 20)
+                active.videoTrackCaptureDefaults = active.videoTrackCaptureDefaults.copy(captureParams = capture)
+                (localTrack as? LocalVideoTrack)?.let { track ->
+                    track.capturer.changeCaptureFormat(854, 480, 20)
+                    track.options = track.options.copy(captureParams = capture)
+                }
+                savingVideoData = true
+                DebugEvents.add(this@CallActivity, "Video data saver enabled after 15 minutes")
+            } catch (_: Exception) { DebugEvents.add(this@CallActivity, "Video data saver will retry") }
         }
     }
     private fun attachLocalAudio() {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Api, AutoJoinGate, emptyDeviceMessage, lastSeenLabel } from '../../../packages/client/src/index.js';
+import { Api, AutoJoinGate, videoProfile, emptyDeviceMessage, lastSeenLabel } from '../../../packages/client/src/index.js';
 
 test('client uses supplied Firebase tokens and retries once after 401', async () => {
   const original = globalThis.fetch;
@@ -59,4 +59,13 @@ test('automatic joining waits for acceptance and foreground, and launches each c
   assert.equal(gate.claim('two', 'accepted', true), true);
   gate.retry('one');
   assert.equal(gate.claim('one', 'accepted', true), true);
+});
+
+
+test('video data saver switches at 15 minutes of accepted call time', () => {
+  assert.equal(videoProfile(1000, 900999).height, 720);
+  assert.equal(videoProfile(1000, 901000).height, 480);
+  assert.equal(videoProfile(1000, 1800000).height, 480);
+  assert.equal(videoProfile(undefined, 1800000).height, 720);
+  assert.equal(videoProfile(2000, 1000).height, 720);
 });

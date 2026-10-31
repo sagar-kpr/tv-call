@@ -20,7 +20,7 @@ identity.
 | POST `/device-authorizations/inspect` | Verified human | `{code}` → brand, model, expiry before approval |
 | POST `/device-authorizations/approve` | Verified human | `{code}` → newly owned TV |
 | POST `/tv/register` | Matching TV | Refresh detected fields, FCM token, and last-seen |
-| PATCH `/tv/settings` | Matching TV | Strict body containing only `name`, `room`, and/or `doNotDisturb` |
+| PATCH `/tv/settings` | Matching TV | Strict body containing only `name`, `room`, `doNotDisturb`, and/or `autoAccept` |
 | GET `/tv/active-call` | Matching TV | Ringing/accepted call used for recovery |
 | GET `/devices` | Verified human | Account's TVs |
 | PATCH `/devices/:deviceId` | Owner | Strict body containing only `name` and/or `room` |
@@ -37,7 +37,7 @@ Registration fields are `deviceId`, `manufacturer`, `model`,
 | --- | --- | --- |
 | POST `/devices/:deviceId/calls` | Owner | Create invitation; terminal Declined for DND or Busy for an occupied TV |
 | GET `/calls/:callId` | Owner or target TV | Current authoritative state |
-| POST `/calls/:callId/action` | Role-dependent | `{action}` where action is `receive`, `accept`, `decline`, `cancel`, or `end`; either participant may end |
+| POST `/calls/:callId/action` | Role-dependent | `{action}` where action is `receive`, `accept`, `auto-accept`, `decline`, `cancel`, or `end`; either participant may end |
 | POST `/calls/:callId/media` | Owner or exact active TV | Accepted calls only; `{url, token}` for one private LiveKit room; `Cache-Control: no-store` |
 | POST `/calls/:callId/heartbeat` | Owner or exact active TV | Accepted calls only; updates that role's media lease and returns call |
 
@@ -55,6 +55,7 @@ Call fields:
   expiresAt: number
   updatedAt: number
   delivery: "pending" | "submitted" | "failed" | "not-sent"
+  autoAcceptUntil?: number // TV-only completion window after 60-second ringing
   acceptedAt?: number
   callerSeenAt?: number
   tvSeenAt?: number
@@ -65,9 +66,15 @@ Call fields:
 ```
 
 Times are Unix milliseconds. `receive` records FCM receipt separately from
-FCM submission and visual presentation. Calls expire to Missed at 30 seconds.
+FCM submission and visual presentation. Normal ringing ends at 60 seconds.
 Repeated completed actions are idempotent; conflicting transitions return 409.
-Expired or cancelled invitations cannot be accepted.
+Expired or cancelled invitations cannot be accepted. A call created for a TV with
+`autoAccept` enabled has `autoAcceptUntil = expiresAt + 10_000`. Only an invitation
+acknowledged before its ringing deadline gets this completion grace. The exact TV
+principal can submit `auto-accept` during that window, after `expiresAt`, if its
+current setting is still enabled and DND is off. Manual acceptance after the ringing
+deadline fails. Rejected/cancelled calls cannot be revived. A server restart does
+not reset either deadline. The FCM TTL and displayed ring countdown remain 60 seconds.
 
 Calls are limited to five per user per minute and thirty per hour.
 Device-authorization starts are limited to five per IP/device per ten minutes,
@@ -78,7 +85,7 @@ every five seconds.
 
 `users/{uid}/devices/{deviceId}` stores account-owned TVs. Operational fields
 include the detected registration fields, `authUid`, `fcmToken`,
-`activeCallId`, `doNotDisturb`, `lastSeen`, timestamps, and schema version.
+`activeCallId`, `doNotDisturb`, `autoAccept` (default false), `lastSeen`, timestamps, and schema version.
 
 `deviceAuthorizations/{authorizationId}` contains only hashed codes/secrets,
 state, expiry, registration preview, and approval/consumption timestamps.
@@ -120,3 +127,7 @@ reads reconcile expired sessions to Ended. End and device removal request room
 deletion; clients also disconnect and stop their own capture. Previously issued
 bearer tokens remain valid until expiry, so new-token refusal is not instant
 JWT revocation. See [LIVEKIT.md](LIVEKIT.md) for deployment and lifecycle details.
+
+TV-only settings PATCH accepts `autoAccept` in addition to name, room and DND.
+Owner device-edit endpoints still permit only name and room. Default room is Bedroom.
+Public configuration advertises `ringSeconds: 60` and `autoAcceptSupported: true`.

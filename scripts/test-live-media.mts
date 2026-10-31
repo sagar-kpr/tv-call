@@ -49,6 +49,16 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN ?? '/usr/bin/google-chrome', headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   const callerPage = await browser.newPage(), tvPage = await browser.newPage();
+  await callerPage.addInitScript(() => {
+    const original = HTMLMediaElement.prototype.play;
+    (window as any).remotePlaybackChecks = [];
+    HTMLMediaElement.prototype.play = function () {
+      if (this.getAttribute('aria-label') === 'TV video')
+        (window as any).remotePlaybackChecks.push({ connected: this.isConnected, muted: this.muted,
+          inline: this instanceof HTMLVideoElement && this.playsInline });
+      return original.call(this);
+    };
+  });
   for (const [page, role] of [[callerPage, 'caller'], [tvPage, 'tv']] as const) {
     await page.goto(`${origin}/?id=${call.id}&role=${role}`);
     // Acceptance opens media automatically; no second Join action is sent.
@@ -65,6 +75,9 @@ try {
     }, undefined, { timeout: 15_000 });
   };
   await Promise.all([frames(callerPage), frames(tvPage)]);
+  const playbackChecks = await callerPage.evaluate(() => (window as any).remotePlaybackChecks as Array<{ connected: boolean; muted: boolean; inline: boolean }>);
+  assert.ok(playbackChecks.length > 0);
+  assert.ok(playbackChecks.every(check => check.connected && check.muted && check.inline), 'Remote video must be inline, muted, and connected before playback');
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
     await callerPage.setViewportSize(viewport);
     const sizes = await callerPage.evaluate(() => {
@@ -80,6 +93,20 @@ try {
     assert.ok(sizes.stageHeight > sizes.viewportHeight * .6, `Remote video must own most of the screen: ${JSON.stringify(sizes)}`);
     assert.ok(sizes.controlsBottom <= sizes.viewportHeight + 1, 'Controls must remain visible');
   }
+  await callerPage.setViewportSize({ width: 390, height: 844 });
+  await callerPage.getByRole('button', { name: 'Landscape view', exact: true }).click();
+  const rotated = await callerPage.locator('.video-call').boundingBox();
+  assert.ok(rotated && Math.abs(rotated.width - 390) < 2 && Math.abs(rotated.height - 844) < 2);
+  assert.equal(await callerPage.locator('.video-call').evaluate(el => el.clientWidth > el.clientHeight), true);
+  await callerPage.getByRole('button', { name: 'Portrait view', exact: true }).click();
+  await callerPage.evaluate(() => window.dispatchEvent(new Event('homeping-test-age')));
+  await callerPage.getByText('Auto · up to 480p', { exact: true }).waitFor();
+  await callerPage.waitForFunction(() => {
+    const video = document.querySelector('.local-media video') as HTMLVideoElement | null;
+    const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+    return track && (track.getSettings().height ?? Infinity) <= 480;
+  });
+  await frames(tvPage);
   await callerPage.getByRole('button', { name: 'Mute', exact: true }).click();
   await callerPage.getByRole('button', { name: 'Enable microphone', exact: true }).waitFor();
   await callerPage.getByRole('button', { name: 'Enable microphone', exact: true }).click();
@@ -89,7 +116,7 @@ try {
   await callerPage.getByRole('button', { name: 'End call', exact: true }).click();
   await tvPage.getByText('Call ended', { exact: true }).waitFor({ timeout: 15_000 });
   assert.equal((await service.get(owner, call.id)).status, 'ended');
-  console.log('PASS: real LiveKit room; both browsers receive video frames and audio; full-screen desktop/phone layouts; mute/camera toggles; End propagates. TV hardware is not tested.');
+  console.log('PASS: real LiveKit room; both browsers receive video frames and audio; full-screen desktop/phone layouts; inline/muted/visible video startup; 15-minute data-saving downgrade; mute/camera toggles; End propagates. TV hardware is not tested.');
 } finally {
   await browser?.close();
   if (callId) await media.close(callId).catch(() => {});

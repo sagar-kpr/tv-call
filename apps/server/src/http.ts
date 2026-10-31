@@ -94,7 +94,7 @@ export function appFor(
   });
   app.post('/api/tv/register', async (req, res) => res.json(await calls.registerTv(tv(res), registration.parse(req.body))));
   app.patch('/api/tv/settings', async (req, res) => {
-    const body = settings.extend({ doNotDisturb: z.boolean().optional() }).parse(req.body);
+    const body = settings.extend({ doNotDisturb: z.boolean().optional(), autoAccept: z.boolean().optional() }).parse(req.body);
     res.json(await calls.updateTvSettings(tv(res), body));
   });
   app.get('/api/tv/active-call', async (_req, res) => res.json({ call: await calls.active(tv(res)) }));
@@ -124,7 +124,7 @@ export function appFor(
   app.post('/api/calls/:id/heartbeat', async (req, res) =>
     res.json(await calls.mediaSession(principal(res), identifier.parse(req.params.id), true)));
   app.post('/api/calls/:id/action', async (req, res) => {
-    const body = z.object({ action: z.enum(['receive', 'accept', 'decline', 'cancel', 'end']) }).strict().parse(req.body);
+    const body = z.object({ action: z.enum(['receive', 'accept', 'auto-accept', 'decline', 'cancel', 'end']) }).strict().parse(req.body);
     res.json(await calls.action(principal(res), identifier.parse(req.params.id), body.action));
   });
   if (webDirectory) app.use(express.static(webDirectory));
