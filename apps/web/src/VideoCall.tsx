@@ -5,7 +5,7 @@ import { videoProfile, type Api, type Call } from '@homeping/client';
 
 export function VideoCall({ api, call, changed }: { api: Api; call: Call; changed: (call: Call) => void }) {
   const roomRef = useRef<Room | null>(null);
-  const local = useRef<HTMLDivElement>(null), remote = useRef<HTMLDivElement>(null);
+  const local = useRef<HTMLDivElement>(null), remote = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null);
   const [joining, setJoining] = useState(false), [connected, setConnected] = useState(false);
   const [mic, setMic] = useState(false), [camera, setCamera] = useState(false);
   const [message, setMessage] = useState('Joining your call…');
@@ -15,6 +15,18 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
   const quality = useRef(videoProfile(call.acceptedAt));
   const [qualityLabel, setQualityLabel] = useState(quality.current.label);
   const [landscape, setLandscape] = useState(false);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const element = stage.current;
+    if (!element) return;
+    const measure = () => setStageSize(previous => {
+      const width = element.clientWidth, height = element.clientHeight;
+      return previous.width === width && previous.height === height ? previous : { width, height };
+    });
+    const observer = new ResizeObserver(measure);
+    observer.observe(element); measure();
+    return () => observer.disconnect();
+  }, []);
   function clear() {
     const room = roomRef.current; roomRef.current = null;
     if (room) { room.removeAllListeners(); void room.disconnect(); }
@@ -142,9 +154,10 @@ export function VideoCall({ api, call, changed }: { api: Api; call: Call; change
       }
     } catch (error) { setMessage((error as Error).message); }
   }
-  return createPortal(<div className={`video-call${landscape ? ' landscape-view' : ''}`} role="dialog" aria-modal="true" aria-label="HomePing video call">
+  return createPortal(<div className="video-call" role="dialog" aria-modal="true" aria-label="HomePing video call">
     <p className="video-status" role="status">{joining && <span className="spinner" aria-hidden="true" />} {message}<span className="video-quality">{qualityLabel}</span></p>
-    <div className="video-stage">{!remoteVideo && <div className="remote-placeholder" role="status">{connected ? 'TV camera is off or not connected' : 'Waiting for TV video…'}</div>}<div ref={remote} className="remote-media" /><div ref={local} className="local-media" /></div>
+    <div className="video-stage" ref={stage}>{!remoteVideo && <div className="remote-placeholder" role="status">{connected ? 'TV camera is off or not connected' : 'Waiting for TV video…'}</div>}<div ref={remote} className={`remote-media${landscape ? ' tv-landscape-view' : ''}`}
+      style={{ '--tv-view-width': `${stageSize.height}px`, '--tv-view-height': `${stageSize.width}px` } as React.CSSProperties} /><div ref={local} className="local-media" /></div>
     <div className="row-actions call-controls">
       {!connected && <button className="primary" disabled={joining} onClick={() => void join()}>{joining ? 'Connecting…' : 'Retry connection'}</button>}
       {connected && <><button className="secondary" onClick={() => void toggle('mic')}>{mic ? 'Mute' : 'Enable microphone'}</button>

@@ -290,7 +290,7 @@ footer {
 
 .video-quality { display: block; margin-top: 3px; font-size: 11px; color: #9fb7ab; }
 
-/* A browser-safe landscape view, including iPhones without orientation-lock support. */
+/* Rotate only received TV video; camera preview, controls and capture stay independent. */
 @media (orientation: portrait) {
-  .video-call.landscape-view { inset: auto; left: 50%; top: 50%; width: 100dvh; height: 100dvw; transform: translate(-50%, -50%) rotate(90deg); }
+  .remote-media.tv-landscape-view { position: absolute; left: 50%; top: 50%; width: var(--tv-view-width); height: var(--tv-view-height); transform: translate(-50%, -50%) rotate(90deg); }
 }

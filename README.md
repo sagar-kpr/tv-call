@@ -277,3 +277,7 @@ After 15 minutes of an accepted call, camera capture switches to a 480p/20 fps t
 without ending the media session. Weak-network adaptation can reduce either target
 further and recover up to the current limit. The web caller includes Landscape view /
 Portrait view for a larger TV picture on phones, including browser-safe iPhone rotation.
+
+Landscape view rotates only the received TV video on a portrait browser screen.
+It leaves the self-preview, call controls, and outgoing camera track untouched.
+This display control does not lock the phone camera against physical device rotation.

@@ -359,3 +359,16 @@ background call acceptance still need hardware testing. At preparation time both
 TVs were absent from ADB; connection to 192.168.1.4:5555 was refused and .8 did not
 connect. The Render backend needs deployment of the source update before the
 60-second timer and auto-accept can work; Firebase Hosting alone cannot change it.
+
+
+### Independent TV viewing rotation — 2026-10-31
+
+The web Landscape view button now rotates only `.remote-media` within the measured
+video stage. The call layout, self-preview and controls remain upright. Camera capture
+is not restarted or reconfigured when toggling the view. The live browser integration
+checks outgoing track identity, capture dimensions, preview geometry, control geometry,
+and the receiving peer's video orientation/track identity before and after toggling.
+Resolution may change independently because adaptive streaming remains enabled.
+Typecheck, web build, browser smoke and live media tests pass. Physical phone rotation
+and actual iPhone behavior require hardware testing; this change does not lock physical
+camera orientation. No TV APK or backend change is required for this display-only fix.

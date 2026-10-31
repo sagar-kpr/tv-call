@@ -94,11 +94,34 @@ try {
     assert.ok(sizes.controlsBottom <= sizes.viewportHeight + 1, 'Controls must remain visible');
   }
   await callerPage.setViewportSize({ width: 390, height: 844 });
+  const outgoingCamera = () => callerPage.evaluate(() => {
+    const video = document.querySelector('.local-media video') as HTMLVideoElement;
+    const track = (video.srcObject as MediaStream).getVideoTracks()[0];
+    const settings = track.getSettings();
+    const bounds = video.getBoundingClientRect();
+    return { id: track.id, width: settings.width, height: settings.height,
+      previewWidth: bounds.width, previewHeight: bounds.height, transform: getComputedStyle(video).transform };
+  });
+  const receivedDimensions = () => tvPage.evaluate(() => {
+    const video = document.querySelector('.remote-media video') as HTMLVideoElement;
+    return { aspect: video.videoWidth / video.videoHeight,
+      landscape: video.videoWidth >= video.videoHeight,
+      trackId: (video.srcObject as MediaStream).getVideoTracks()[0].id };
+  });
+  const beforeCamera = await outgoingCamera(), beforeReceived = await receivedDimensions();
+  const beforeControls = await callerPage.locator('.call-controls').boundingBox();
   await callerPage.getByRole('button', { name: 'Landscape view', exact: true }).click();
-  const rotated = await callerPage.locator('.video-call').boundingBox();
-  assert.ok(rotated && Math.abs(rotated.width - 390) < 2 && Math.abs(rotated.height - 844) < 2);
-  assert.equal(await callerPage.locator('.video-call').evaluate(el => el.clientWidth > el.clientHeight), true);
+  assert.equal(await callerPage.locator('.remote-media').evaluate(el => getComputedStyle(el).transform !== 'none'), true);
+  assert.equal(await callerPage.locator('.video-call').evaluate(el => getComputedStyle(el).transform), 'none');
+  assert.deepEqual(await outgoingCamera(), beforeCamera, 'Viewing rotation must not change outgoing capture or the self-preview');
+  const afterReceived = await receivedDimensions();
+  assert.equal(afterReceived.trackId, beforeReceived.trackId);
+  assert.equal(afterReceived.landscape, beforeReceived.landscape);
+  assert.ok(Math.abs(afterReceived.aspect - beforeReceived.aspect) < .02, 'TV camera orientation must stay the same while adaptive quality may change');
+  assert.deepEqual(await callerPage.locator('.call-controls').boundingBox(), beforeControls);
+  await frames(tvPage);
   await callerPage.getByRole('button', { name: 'Portrait view', exact: true }).click();
+  assert.equal(await callerPage.locator('.remote-media').evaluate(el => getComputedStyle(el).transform), 'none');
   await callerPage.evaluate(() => window.dispatchEvent(new Event('homeping-test-age')));
   await callerPage.getByText('Auto · up to 480p', { exact: true }).waitFor();
   await callerPage.waitForFunction(() => {
